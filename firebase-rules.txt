@@ -1,0 +1,26 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    /*
+      กฎชุดนี้ตั้งใจให้ "ไม่เปิดสาธารณะ" และต้องผ่าน Firebase Anonymous Auth ก่อน
+      เหมาะกับเว็บ static บน GitHub Pages ที่ไม่มี server กลาง
+
+      ข้อจำกัดสำคัญ:
+      - Firebase Rules ตรวจ PIN 4 ตัวของระบบร้านไม่ได้ เพราะ PIN เป็น logic ในหน้าเว็บ
+      - ทุกคนที่ anonymous auth สำเร็จและเปิดเว็บได้ จะผ่านกฎระดับ Firebase
+      - สิทธิ์ เจ้าของ/ผู้จัดการ/หัวหน้างาน/พนักงาน ถูกควบคุมในหน้าเว็บ
+      - ถ้าต้องการความปลอดภัยระดับสูง ควรเพิ่ม Firebase Custom Auth / Cloud Functions / Custom Claims
+
+      ห้ามใช้กฎ allow read, write: if true; เพราะจะกลายเป็นฐานข้อมูลสาธารณะ
+    */
+
+    match /{document=**} {
+      allow read, write: if signedIn();
+    }
+  }
+}
