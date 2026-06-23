@@ -1,4 +1,4 @@
-const CACHE_NAME = "love-matcha-sales-v1.0";
+const CACHE_NAME = "love-matcha-sales-v1.0-fix-20260623";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -32,6 +32,20 @@ self.addEventListener("fetch", event => {
   // Firestore/Auth requests are handled by Firebase SDK. Do not cache API writes.
   if (url.hostname.includes("firestore.googleapis.com") || url.hostname.includes("identitytoolkit.googleapis.com")) return;
 
+  // ไฟล์เว็บของเราใช้ network-first เพื่อให้เวลาอัปโหลดเวอร์ชันแก้ไขแล้วไม่ค้างไฟล์เก่า
+  if (url.origin === self.location.origin) {
+    event.respondWith(
+      fetch(event.request).then(response => {
+        if (response && response.status === 200) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(() => null);
+        }
+        return response;
+      }).catch(() => caches.match(event.request).then(cached => cached || caches.match("./index.html")))
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then(cached => {
       const network = fetch(event.request).then(response => {
@@ -40,7 +54,7 @@ self.addEventListener("fetch", event => {
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(() => null);
         }
         return response;
-      }).catch(() => cached || caches.match("./index.html"));
+      }).catch(() => cached);
       return cached || network;
     })
   );

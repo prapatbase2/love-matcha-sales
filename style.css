@@ -48,7 +48,8 @@ button{cursor:pointer}
 .grid{display:grid;gap:10px}
 .grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
 .grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
-@media(max-width:720px){.grid.two,.grid.three{grid-template-columns:1fr}.hide-mobile{display:none!important}.content{padding:10px}.panel{padding:12px;border-radius:16px}}
+.grid.four{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:720px){.grid.two,.grid.three,.grid.four{grid-template-columns:1fr}.hide-mobile{display:none!important}.content{padding:10px}.panel{padding:12px;border-radius:16px}}
 .field{display:flex;flex-direction:column;gap:6px;text-align:left}
 .field label{font-weight:800;color:#334329}
 .field small{color:var(--muted)}
@@ -107,3 +108,5 @@ tr.hidden-log{opacity:.42}
 .badge-role{font-size:.78rem;border-radius:999px;padding:3px 7px;background:var(--secondary);color:var(--primary-dark);font-weight:900}
 details summary{cursor:pointer;font-weight:900;color:var(--primary-dark)}
 pre.preview{max-height:260px;overflow:auto;background:#10180d;color:#e8ffe0;border-radius:14px;padding:12px}
+
+.history-changes{display:grid;gap:6px;margin-top:8px;padding:10px;border-radius:12px;background:var(--secondary)}
