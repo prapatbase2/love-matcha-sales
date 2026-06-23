@@ -118,3 +118,49 @@ body.is-offline #pageContent textarea{
 .comp-row input.wide-money{min-width:120px}
 .comp-row .comp-ot-note,.comp-row .comp-deduction-note{min-width:180px}
 .user-mini{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+
+
+/* รายละเอียดรายเดือน */
+.monthly-detail-row td{background:#fbfcfa}
+.monthly-detail-card{padding:8px 2px}
+.detail-box{border:1px solid var(--line);border-radius:14px;background:#fff;padding:10px;display:flex;flex-direction:column;gap:3px}
+.detail-box small{color:var(--muted);font-weight:800}
+.detail-box b{color:var(--primary-dark)}
+.detail-box span{color:var(--muted);font-size:.9rem}
+.detail-section{border:1px solid var(--line);border-radius:14px;background:#fff;padding:12px}
+.detail-section h4{margin:0 0 8px;color:var(--primary-dark)}
+.detail-list{margin:0;display:grid;gap:6px}
+.detail-list div{display:flex;justify-content:space-between;gap:12px;border-bottom:1px dashed var(--line);padding-bottom:6px}
+.detail-list div:last-child{border-bottom:0;padding-bottom:0}
+.detail-list dt{font-weight:700;color:#334329}
+.detail-list dd{margin:0;text-align:right;white-space:nowrap}
+.mini-table table{min-width:480px}
+.empty.compact{padding:12px}
+
+/* หน้ารายละเอียดค่าตอบแทน / PDF */
+.modal-backdrop{position:fixed;inset:0;background:rgba(13,20,10,.58);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow:auto}
+.modal-card{width:min(920px,100%);background:#fff;border-radius:22px;border:1px solid var(--line);box-shadow:0 18px 60px rgba(0,0,0,.28);padding:14px;margin:18px 0}
+.modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:12px}
+.modal-head h3{margin:0;color:var(--primary-dark)}
+.modal-head p{margin:4px 0 0;color:var(--muted)}
+.modal-actions{position:sticky;bottom:0;background:linear-gradient(to top,#fff 80%,rgba(255,255,255,0));display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;padding-top:12px;margin-top:12px}
+.pdf-sheet{background:#fff;border:1px solid var(--line);border-radius:18px;padding:12px;overflow:auto}
+.pdf-document{background:#fff;color:#17210f;width:100%;max-width:760px;margin:0 auto;padding:22px;font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif}
+.pdf-header{display:flex;gap:14px;align-items:center;border-bottom:3px solid #436b2a;padding-bottom:14px;margin-bottom:16px}
+.pdf-header img{width:72px;height:72px;object-fit:contain;border:1px solid #dce5d5;border-radius:16px;padding:3px;background:#fff}
+.pdf-header h1{margin:0;font-size:28px;color:#2e501b}
+.pdf-header p{margin:4px 0 0;color:#66725c;font-weight:700}
+.pdf-info-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}
+.pdf-info-grid div{border:1px solid #dce5d5;border-radius:12px;padding:10px;background:#fbfcfa}
+.pdf-info-grid small{display:block;color:#66725c;font-weight:800;margin-bottom:3px}
+.pdf-info-grid b{font-size:16px;color:#17210f}
+.pdf-table{width:100%;min-width:0;border-collapse:collapse;margin-top:12px;font-size:15px}
+.pdf-table th,.pdf-table td{border:1px solid #dce5d5;padding:10px;position:static;vertical-align:top}
+.pdf-table th{background:#eef7e9;color:#2e501b;text-align:left}
+.pdf-money{text-align:right!important;white-space:nowrap;font-weight:800}
+.pdf-note{font-size:12px;color:#66725c;margin-top:2px}
+.pdf-subtotal td{background:#fbfcfa;font-weight:900}
+.pdf-total td{background:#eaf8e7;color:#1f6b22;font-size:18px;font-weight:900}
+.pdf-note-box{margin-top:14px;border:1px solid #dce5d5;border-radius:12px;padding:12px;background:#fbfcfa;color:#334329}
+@media(max-width:640px){.modal-backdrop{padding:6px}.modal-card{border-radius:16px;margin:8px 0;padding:10px}.modal-head{flex-direction:column}.modal-actions .btn{width:100%}.pdf-document{padding:12px}.pdf-info-grid{grid-template-columns:1fr}.pdf-header h1{font-size:23px}.pdf-header img{width:58px;height:58px}}
+@media print{.modal-head,.modal-actions,.bottom-nav,.topbar,.offline-banner,.toast{display:none!important}.modal-backdrop{position:static;background:#fff;padding:0}.modal-card{box-shadow:none;border:0;margin:0;padding:0}.pdf-sheet{border:0;padding:0}}
