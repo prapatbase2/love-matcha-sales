@@ -114,3 +114,10 @@ body.is-offline #pageContent textarea{
   color:#777;
 }
 .offline-locked{cursor:not-allowed!important}
+
+.tabbar{display:flex;gap:8px;overflow:auto;margin:6px 0 12px}
+.tab-btn{border:1px solid var(--line);background:#fff;color:var(--primary-dark);border-radius:999px;padding:10px 14px;font-weight:900;white-space:nowrap}
+.tab-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+.detail-row td{background:#fbfdf9}
+.detail-card{padding:10px;border:1px dashed var(--line);border-radius:14px;background:#fff}
+.detail-card b{color:var(--primary-dark)}
