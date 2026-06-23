@@ -8,7 +8,7 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
-  <link rel="stylesheet" href="./style.css?v=fix-20260623" />
+  <link rel="stylesheet" href="./style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
 
   <!--
@@ -17,12 +17,12 @@
   -->
   <script>
     window.LOVE_MATCHA_FIREBASE_CONFIG = {
-      apiKey: "ใส่ของคุณ",
-      authDomain: "ใส่ของคุณ",
-      projectId: "ใส่ของคุณ",
-      storageBucket: "ใส่ของคุณ",
-      messagingSenderId: "ใส่ของคุณ",
-      appId: "ใส่ของคุณ"
+      apiKey: "AIzaSyCn_iarrs-snOSZDJClNJ4YfAjuHni03dI",
+      authDomain: "love-matcha-sale-3de45.firebaseapp.com",
+      projectId: "love-matcha-sale-3de45",
+      storageBucket: "love-matcha-sale-3de45.firebasestorage.app",
+      messagingSenderId: "778024186668",
+      appId: "1:778024186668:web:faa88ad2be17524bacb289"
     };
   </script>
 </head>
@@ -78,6 +78,20 @@
     <nav id="bottomNav" class="bottom-nav" aria-label="เมนูหลัก"></nav>
   </div>
 
-  <script type="module" src="./app.js?v=fix-20260623"></script>
+  <script type="module" src="./app.js"></script>
+  <script>
+    // กันหน้าโหลดค้างกรณีเปิดด้วย file:// หรืออินเทอร์เน็ตบล็อก Firebase CDN
+    window.addEventListener('DOMContentLoaded', function(){
+      setTimeout(function(){
+        if (window.__LOVE_MATCHA_APP_BOOTED) return;
+        var area = document.getElementById('loginArea');
+        if (!area || !area.textContent.includes('กำลังโหลดระบบ')) return;
+        var isFile = location.protocol === 'file:';
+        area.innerHTML = isFile
+          ? '<div class="state warn"><b>เปิดไฟล์แบบดับเบิลคลิกไม่ได้</b><br>ให้เปิดผ่าน GitHub Pages หรือดับเบิลคลิกไฟล์ <b>เปิดทดสอบในเครื่อง.bat</b> ใน ZIP แล้วเข้า http://localhost:8000</div>'
+          : '<div class="state error"><b>โหลดระบบไม่สำเร็จ</b><br>กรุณาเช็กอินเทอร์เน็ต เพราะระบบต้องโหลด Firebase จาก CDN หรือเปิด Console เพื่อดู error</div>';
+      }, 7000);
+    });
+  </script>
 </body>
 </html>
