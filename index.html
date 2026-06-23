@@ -6,8 +6,9 @@
   <meta name="theme-color" content="#436b2a" />
   <title>Love Matcha Sales v1.0</title>
   <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="icon" type="image/png" sizes="192x192" href="./icons/puru-icon-192.png" />
-  <link rel="apple-touch-icon" href="./icons/puru-icon-192.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png" />
   <link rel="stylesheet" href="./style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
 
@@ -31,7 +32,7 @@
 
   <section id="configScreen" class="screen center-screen hidden">
     <div class="login-card">
-      <img src="./icons/puru-icon-192.png" alt="Love Matcha" class="login-logo">
+      <img src="./icons/logo.png" alt="Love Matcha" class="login-logo">
       <h1>Love Matcha</h1>
       <p class="version">v1.0</p>
       <div class="state error">
@@ -43,7 +44,7 @@
 
   <section id="loginScreen" class="screen center-screen">
     <div class="login-card">
-      <img src="./icons/puru-icon-192.png" alt="Love Matcha" class="login-logo">
+      <img src="./icons/logo.png" alt="Love Matcha" class="login-logo">
       <h1 id="loginStoreName">Love Matcha</h1>
       <p class="version">v1.0</p>
       <div id="loginArea">
@@ -55,7 +56,7 @@
   <div id="mainApp" class="app hidden">
     <header class="topbar">
       <div class="brand">
-        <img id="appLogo" src="./icons/puru-icon-192.png" alt="logo">
+        <img id="appLogo" src="./icons/logo.png" alt="logo">
         <div>
           <b id="appTitle">Love Matcha</b>
           <small id="appSub">v1.0</small>
@@ -63,6 +64,7 @@
       </div>
       <div class="user-mini">
         <span id="onlinePill" class="pill ok">ออนไลน์</span>
+        <button id="changePinTopBtn" class="btn ghost small write-action">PIN</button>
         <button id="logoutBtn" class="btn ghost small">ออก</button>
       </div>
     </header>

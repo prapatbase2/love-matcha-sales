@@ -1,12 +1,17 @@
-const CACHE_NAME = "love-matcha-sales-v1.0.6";
+const CACHE_NAME = "love-matcha-sales-v1.0.5-logo";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
   "./manifest.webmanifest",
-  "./icons/puru-icon-192.png",
-  "./icons/puru-icon-512.png",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png",
+  "./icons/logo.png",
+  "./icons/logo-192.png",
+  "./icons/apple-touch-icon.png",
+  "./icons/favicon-32.png",
+  "./icons/favicon-16.png",
   "https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js",
   "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js",
   "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js",
