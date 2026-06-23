@@ -159,14 +159,6 @@ function dessertItemByName(name){
   return (appState.settings.dessertItems || []).find(x=>x.name === name) || null;
 }
 const HIDDEN_HISTORY_ACTIONS = new Set(["ซ่อนประวัติ", "แสดงประวัติกลับ"]);
-const LOGIN_HISTORY_ACTIONS = new Set(["login_success", "login_failed", "first_setup"]);
-const MAIN_HISTORY_ACTIONS = new Set([
-  "เพิ่มยอดขาย", "แก้ไขยอดขาย", "ลบ/restore ข้อมูล",
-  "เพิ่มเงินเบิกล่วงหน้า", "แก้ค่าตอบแทน",
-  "เปลี่ยน PIN", "เพิ่ม user", "แก้ไข user", "ลบ user",
-  "ตั้งค่าหน้าตาเว็บ", "ตั้งค่าสาขา", "ตั้งค่าโบนัสรายวัน", "ตั้งค่าโบนัสรายเดือน", "ตั้งค่า OT ทำขนม",
-  "ตั้งค่าสำรองข้อมูล", "สำรองข้อมูล", "restore backup", "Restore Backup"
-]);
 function applyTheme(){
   const s = appState.settings || DEFAULT_SETTINGS;
   document.documentElement.style.setProperty("--primary", s.primaryColor || DEFAULT_SETTINGS.primaryColor);
@@ -298,7 +290,6 @@ function normalizeSettings(){
 
 function renderFirstSetup(){
   $("#loginArea").innerHTML = `
-    <div class="state warn">ยังไม่มีผู้ใช้ในระบบ กรุณาสร้างเจ้าของคนแรก</div>
     <div class="grid">
       <div class="field"><label>ชื่อเจ้าของ</label><input id="firstName" autocomplete="name" placeholder="เช่น คุณบอส"></div>
       <div class="field"><label>PIN 4 ตัว</label><input id="firstPin" inputmode="numeric" maxlength="4" type="password" placeholder="กรอกตัวเลข 4 ตัว"></div>
@@ -344,7 +335,6 @@ function renderLogin(){
       </div>
       <label class="check-item"><input id="rememberLogin" type="checkbox" ${remembered.userId?"checked":""}> จดจำ user และ PIN ในเครื่องนี้</label>
       <button class="btn full write-action" type="submit">เข้าสู่ระบบ</button>
-      <div class="state warn"><b>หมายเหตุ:</b> ระบบนี้ใช้ PIN ภายในร้าน ควรให้เฉพาะพนักงานที่ไว้ใจใช้งานเท่านั้น</div>
     </form>`;
   $("#loginForm").onsubmit = async (e)=>{
     e.preventDefault();
@@ -438,10 +428,8 @@ function branchOptions({includeAll=false, selected=""}={}){
   return allOpt + b.map(x=>`<option value="${x.id}" ${selected===x.id?"selected":""}>${escapeHtml(x.name)}</option>`).join("");
 }
 function personalBranchOptions(selected="ALL"){
-  const branches = visibleBranches();
   const allLabel = isOwnerOrManager() ? "รวมทุกสาขา" : "รวมทุกสาขาที่มีสิทธิ์";
-  return `<option value="ALL" ${selected==="ALL"?"selected":""}>${allLabel}</option>` +
-    branches.map(x=>`<option value="${x.id}" ${selected===x.id?"selected":""}>${escapeHtml(x.name)}</option>`).join("");
+  return `<option value="ALL" ${selected==="ALL"?"selected":""}>${allLabel}</option>` + visibleBranches().map(x=>`<option value="${x.id}" ${selected===x.id?"selected":""}>${escapeHtml(x.name)}</option>`).join("");
 }
 function usersForBranch(branchId){
   return appState.users.filter(u => u.active !== false && ["manager","supervisor","staff"].includes(u.role) && (
@@ -476,6 +464,7 @@ function kpis(items){
 }
 
 async function renderDashboard(){
+  if(!isOwnerOrManager()) return navigate("daily");
   setLoading();
   const monthKey = currentMonthKey();
   const rows = await getSalesForMonth(monthKey, "ALL");
@@ -501,15 +490,50 @@ async function renderDashboard(){
   const values = activeBranches().filter(b=>isOwnerOrManager() || canSeeBranch(b.id)).map(b=>aggregateSales(visible.filter(r=>r.branchId===b.id)).totalAll);
   drawBar("branchChart", labels, values, "รายได้รวมทั้งหมด");
 }
-function salesTable(rows){
+function salesTable(rows, options={}){
+  const showDetails = !!options.details;
   if(!rows.length) return `<div class="empty">ยังไม่มีข้อมูล</div>`;
   return `<div class="table-wrap"><table>
-    <thead><tr><th>วันที่</th><th>สาขา</th><th>สถานะ</th><th class="money">รายได้รวมทั้งหมด</th><th class="money">ค่านม</th><th class="money">รายจ่ายอื่น</th><th class="money">เงินสดขาด/เกิน</th><th>หมายเหตุ</th></tr></thead>
+    <thead><tr><th>วันที่</th><th>สาขา</th><th>สถานะ</th><th class="money">รายได้รวมทั้งหมด</th><th class="money">ค่านม</th><th class="money">รายจ่ายอื่น</th><th class="money">เงินสดขาด/เกิน</th><th>หมายเหตุ</th>${showDetails?`<th>รายละเอียด</th>`:""}</tr></thead>
     <tbody>${rows.map(r=>`<tr>
       <td>${thaiDate(r.date)}</td><td>${escapeHtml(branchName(r.branchId))}</td>
       <td>${r.closed?`<span class="pill warn">หยุด</span>`:`<span class="pill ok">เปิดร้าน</span>`}</td>
       <td class="money">${money(r.totalAll)}</td><td class="money">${money(r.milkCost)}</td><td class="money">${money(r.otherExpenseTotal)}</td><td class="money">${money(r.cashDiff)}</td><td>${escapeHtml(r.note||"")}</td>
-    </tr>`).join("")}</tbody></table></div>`;
+      ${showDetails?`<td><button type="button" class="btn secondary small monthly-detail-btn" data-id="${escapeHtml(r.id || `${r.branchId}_${r.date}`)}">ดูรายละเอียด</button></td>`:""}
+    </tr>${showDetails?`<tr id="detail_${escapeHtml(r.id || `${r.branchId}_${r.date}`).replace(/[^a-zA-Z0-9_-]/g,"_")}" class="monthly-detail-row hidden"><td colspan="9">${monthlyDetailHtml(r)}</td></tr>`:""}`).join("")}</tbody></table></div>`;
+}
+function monthlyDetailHtml(r){
+  const expenses = r.expenses || [];
+  const createdBy = r.createdByName || userName(r.createdBy) || "-";
+  const updatedBy = r.updatedByName || userName(r.updatedBy) || createdBy;
+  return `<div class="detail-card">
+    <div class="grid two">
+      <div><b>วันที่</b><br>${thaiDate(r.date)}<br><b>สาขา</b><br>${escapeHtml(branchName(r.branchId))}</div>
+      <div><b>คนที่ลงข้อมูล</b><br>${escapeHtml(createdBy)}<br><small>สร้าง: ${formatTs(r.createdAt || r.createdAtISO)}</small><br><small>แก้ล่าสุด: ${escapeHtml(updatedBy)} / ${formatTs(r.updatedAt || r.updatedAtISO)}</small></div>
+    </div>
+    <div class="divider"></div>
+    <div class="grid three">
+      <div><b>ยอดขายก่อนส่วนลด</b><br>${money(r.grossSales)} บาท</div>
+      <div><b>ส่วนลด</b><br>${money(r.discount)} บาท</div>
+      <div><b>รายได้รวม</b><br>${money(r.netSales)} บาท</div>
+      <div><b>Line Man</b><br>${money(r.lineMan)} บาท</div>
+      <div><b>Grab</b><br>${money(r.grab)} บาท</div>
+      <div><b>รายได้รวมทั้งหมด</b><br>${money(r.totalAll)} บาท</div>
+      <div><b>ค่านม</b><br>${money(r.milkCost)} บาท</div>
+      <div><b>รายจ่ายอื่นรวม</b><br>${money(r.otherExpenseTotal)} บาท</div>
+      <div><b>เงินสดขาด/เกิน</b><br>${money(r.cashDiff)} บาท</div>
+    </div>
+    <div class="divider"></div>
+    <b>พนักงานในกะ</b><br>${escapeHtml((r.workerNames || []).join(", ") || "-")}
+    <div style="margin-top:8px"><b>รายจ่ายอื่น</b>${expenses.length ? `<ul>${expenses.map(e=>`<li>${escapeHtml(e.name||"-")} ${money(e.amount)} บาท ${e.note?`<small>(${escapeHtml(e.note)})</small>`:""}</li>`).join("")}</ul>` : `<div class="empty" style="padding:8px;text-align:left">ไม่มีรายจ่ายอื่น</div>`}</div>
+  </div>`;
+}
+function bindMonthlyDetailButtons(){
+  $$(".monthly-detail-btn").forEach(btn=>btn.onclick=()=>{
+    const id = `detail_${btn.dataset.id.replace(/[^a-zA-Z0-9_-]/g,"_")}`;
+    const row = document.getElementById(id);
+    if(row) row.classList.toggle("hidden");
+  });
 }
 function drawBar(canvasId, labels, values, label){
   const el = document.getElementById(canvasId);
@@ -662,13 +686,12 @@ function addExpenseRow(row={}){
   updateOnlineUi();
 }
 function addDessertRow(row={}){
-  const id = row.id || uid("dessert");
   const items = appState.settings.dessertItems || [];
   const selectedName = row.name || row.itemName || "";
   const options = items.map(x=>`<option value="${escapeHtml(x.name)}" ${selectedName===x.name?"selected":""}>${escapeHtml(x.name)}</option>`).join("");
   const div = document.createElement("div");
   div.className = "panel dessert-row";
-  div.dataset.id = id;
+  div.dataset.id = row.id || uid("dessert");
   div.style.margin = "8px 0";
   div.innerHTML = `
     <div class="grid three">
@@ -790,44 +813,45 @@ async function loadExistingDaily(){
   const snap = await getDoc(doc(appState.db, "dailySales", id));
   if(token !== appState.dailyLoadToken) return;
   appState.dailyExisting = snap.exists() ? {id:snap.id, ...snap.data()} : null;
-  $("#existingWarn").innerHTML = appState.dailyExisting
-    ? `<div class="state ok"><b>พบข้อมูลเดิมของ ${thaiDate(date)} / สาขา ${escapeHtml(branchName(branchId))}</b><br>แสดงข้อมูลที่บันทึกไว้แล้ว สามารถแก้ไขและกดบันทึกได้ ข้อมูลนี้แยกเฉพาะวันและสาขานี้เท่านั้น</div>`
-    : `<div class="state warn">ยังไม่มีข้อมูลของ ${thaiDate(date)} / สาขา ${escapeHtml(branchName(branchId))} ถ้ากดบันทึกจะเป็นรายการใหม่</div>`;
+  $("#existingWarn").innerHTML = appState.dailyExisting ? `<div class="state warn">วันนี้/สาขานี้มีข้อมูลแล้ว ถ้าบันทึกจะเป็นการแก้ไขข้อมูลเดิม ระบบจะถามยืนยันก่อน</div>` : "";
   if(snap.exists()) fillDailyForm(appState.dailyExisting);
   recalcDaily();
 }
-function setInputValue(id, value){
-  const el = document.getElementById(id);
-  if(el) el.value = value === undefined || value === null ? "" : value;
-}
-function fillDailyForm(d){
-  if(!d) return;
-  const fieldMap = {
-    grossSales:"grossSales", discount:"discount", cashSales:"cashSales", transferSales:"transferSales",
-    paymentMismatchReason:"paymentMismatchReason", lineMan:"lineMan", grab:"grab", cashOpen:"cashOpen",
-    cashClose:"cashClose", milkCost:"milkCost", ownerCashOut:"ownerCashOut", cashDiffReason:"cashDiffReason",
-    prevCupRemain:"prevCupRemain", cupsAdded:"cupsAdded", cupsRemain:"cupsRemain", cupNote:"cupNote", note:"dailyNote"
-  };
-  Object.entries(fieldMap).forEach(([key,id])=>setInputValue(id, d[key]));
-  $("#dailyClosed").checked = !!d.closed;
-  $("#openShopFields").classList.toggle("hidden", !!d.closed);
-  refreshDailyWorkers(d.workerIds || []);
-  $$(".otWorkerCheck").forEach(x=>x.checked = (d.otWorkerIds || []).includes(x.value));
-  $("#expensesBox").innerHTML = "";
-  const expenses = Array.isArray(d.expenses) ? d.expenses : [];
-  if(expenses.length) expenses.forEach(exp=>addExpenseRow(exp));
-  else addExpenseRow();
-  $("#dessertsBox").innerHTML = "";
-  const desserts = Array.isArray(d.desserts) ? d.desserts : [];
-  if(desserts.length) desserts.forEach(item=>addDessertRow(item));
-  else addDessertRow();
-  $("#otEnabled").checked = !!d.otEnabled;
-  $("#otFields").classList.toggle("hidden", !d.otEnabled);
-  if(d.date){
-    setInputValue("dailyDate", d.date);
-    setInputValue("dailyMonth", monthOf(d.date));
-    $("#dailyThaiDate").textContent = thaiDate(d.date);
-  }
+function fillDailyForm(data){
+  if(!data) return;
+  const set = (id, value)=>{ const el=document.getElementById(id); if(el) el.value = value ?? ""; };
+  const closed = !!data.closed;
+  const closedEl = $("#dailyClosed");
+  if(closedEl) closedEl.checked = closed;
+  $("#openShopFields")?.classList.toggle("hidden", closed);
+  set("grossSales", data.grossSales);
+  set("discount", data.discount);
+  set("cashSales", data.cashSales);
+  set("transferSales", data.transferSales);
+  set("paymentMismatchReason", data.paymentMismatchReason);
+  set("lineMan", data.lineMan);
+  set("grab", data.grab);
+  set("cashOpen", data.cashOpen);
+  set("cashClose", data.cashClose);
+  set("milkCost", data.milkCost);
+  set("ownerCashOut", data.ownerCashOut);
+  set("cashDiffReason", data.cashDiffReason);
+  set("prevCupRemain", data.prevCupRemain);
+  set("cupsAdded", data.cupsAdded);
+  set("cupsRemain", data.cupsRemain);
+  set("cupNote", data.cupNote);
+  set("dailyNote", data.note);
+  refreshDailyWorkers(data.workerIds || []);
+  $$(".otWorkerCheck").forEach(x=>{ x.checked = (data.otWorkerIds || []).includes(x.value); });
+  const expBox = $("#expensesBox");
+  if(expBox){ expBox.innerHTML = ""; (data.expenses && data.expenses.length ? data.expenses : [{}]).forEach(addExpenseRow); }
+  const otEnabled = $("#otEnabled");
+  if(otEnabled) otEnabled.checked = !!data.otEnabled;
+  $("#otFields")?.classList.toggle("hidden", !data.otEnabled);
+  const dessertBox = $("#dessertsBox");
+  if(dessertBox){ dessertBox.innerHTML = ""; (data.desserts && data.desserts.length ? data.desserts : [{}]).forEach(addDessertRow); }
+  recalcDaily();
+  updateOnlineUi();
 }
 function validateDaily(d){
   if(!d.date || !d.branchId) return "กรุณาเลือกวันที่และสาขา";
@@ -852,7 +876,8 @@ async function saveDaily(e){
   const beforeSnap = await getDoc(ref);
   const before = beforeSnap.exists() ? {id:beforeSnap.id, ...beforeSnap.data()} : null;
   if(before && !confirm(`วันที่ ${thaiDate(data.date)} สาขา ${branchName(data.branchId)} มีข้อมูลแล้ว ต้องการแก้ไขทับใช่ไหม?`)) return;
-  const nowFields = before ? {updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id, updatedByName:appState.currentUser.name} : {createdAt:serverTimestamp(), createdBy:appState.currentUser.id, createdByName:appState.currentUser.name, updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id, updatedByName:appState.currentUser.name};
+  const nowISO = new Date().toISOString();
+  const nowFields = before ? {updatedAt:serverTimestamp(), updatedAtISO:nowISO, updatedBy:appState.currentUser.id, updatedByName:appState.currentUser.name} : {createdAt:serverTimestamp(), createdAtISO:nowISO, createdBy:appState.currentUser.id, createdByName:appState.currentUser.name, updatedAt:serverTimestamp(), updatedAtISO:nowISO, updatedBy:appState.currentUser.id, updatedByName:appState.currentUser.name};
   const batch = writeBatch(appState.db);
   batch.set(ref, {...data, ...nowFields}, {merge:true});
   // mirror collections for easier backup/export
@@ -908,52 +933,11 @@ async function loadMonthlyResult(){
         <button id="exportMonthlyCsv" class="btn secondary small">Export CSV</button>
         <button id="exportMonthlyJson" class="btn secondary small">Export JSON</button>
       </div>
-      ${monthlySalesTable(rows)}
+      ${salesTable(rows, {details:true})}
     </div>`;
-  bindMonthlyDetails();
+  bindMonthlyDetailButtons();
   $("#exportMonthlyCsv").onclick = ()=>downloadText(`LoveMatcha_${monthKey}_${branchId}.csv`, dailyRowsToCsv(rows), "text/csv");
   $("#exportMonthlyJson").onclick = ()=>downloadText(`LoveMatcha_${monthKey}_${branchId}.json`, JSON.stringify(rows, null, 2), "application/json");
-}
-function monthlySalesTable(rows){
-  if(!rows.length) return `<div class="empty">ยังไม่มีข้อมูล</div>`;
-  return `<div class="table-wrap"><table>
-    <thead><tr><th>วันที่</th><th>สาขา</th><th>สถานะ</th><th class="money">รายได้รวมทั้งหมด</th><th class="money">รายจ่ายอื่น</th><th>คนลงข้อมูล</th><th>เวลา</th><th>รายละเอียด</th></tr></thead>
-    <tbody>${rows.map((r,i)=>`<tr>
-      <td>${thaiDate(r.date)}</td>
-      <td>${escapeHtml(branchName(r.branchId))}</td>
-      <td>${r.closed?`<span class="pill warn">หยุด</span>`:`<span class="pill ok">เปิดร้าน</span>`}</td>
-      <td class="money">${money(r.totalAll)}</td>
-      <td class="money">${money(r.otherExpenseTotal)}</td>
-      <td>${escapeHtml(r.updatedByName || r.createdByName || userName(r.updatedBy || r.createdBy) || "-")}</td>
-      <td>${formatTs(r.updatedAt || r.createdAt || r.createdAtISO)}</td>
-      <td><button type="button" class="btn secondary small monthly-detail-btn" data-target="monthly-detail-${i}">ดูรายละเอียด</button></td>
-    </tr>
-    <tr id="monthly-detail-${i}" class="detail-row hidden"><td colspan="8">${monthlyDetailHtml(r)}</td></tr>`).join("")}</tbody></table></div>`;
-}
-function monthlyDetailHtml(r){
-  const expenses = Array.isArray(r.expenses) ? r.expenses.filter(x=>x.name || numberValue(x.amount) || x.note) : [];
-  return `<div class="detail-card">
-    <div class="grid three">
-      <div><b>รายได้รวม</b><br>ก่อนลด ${money(r.grossSales)} - ส่วนลด ${money(r.discount)} = ${money(r.netSales)} บาท</div>
-      <div><b>เดลิเวอรี่</b><br>Line Man ${money(r.lineMan)} / Grab ${money(r.grab)} บาท</div>
-      <div><b>รายได้รวมทั้งหมด</b><br>${money(r.totalAll)} บาท</div>
-      <div><b>เงินสด</b><br>สด ${money(r.cashSales)} / โอน ${money(r.transferSales)} / ขาดเกิน ${money(r.cashDiff)}</div>
-      <div><b>แก้ว</b><br>เหลือก่อน ${money(r.prevCupRemain)} + เพิ่ม ${money(r.cupsAdded)} - เหลือวันนี้ ${money(r.cupsRemain)} = ใช้ ${money(r.cupsUsed)}</div>
-      <div><b>คนทำงาน</b><br>${escapeHtml((r.workerNames || []).join(", ") || "-")}</div>
-      <div><b>คนลงข้อมูลครั้งแรก</b><br>${escapeHtml(r.createdByName || userName(r.createdBy) || "-")}<br>${formatTs(r.createdAt || r.createdAtISO)}</div>
-      <div><b>คนแก้ไขล่าสุด</b><br>${escapeHtml(r.updatedByName || userName(r.updatedBy) || "-")}<br>${formatTs(r.updatedAt || r.createdAtISO)}</div>
-      <div><b>หมายเหตุ</b><br>${escapeHtml(r.note || "-")}</div>
-    </div>
-    <div style="margin-top:10px"><b>รายจ่ายอื่น ๆ</b>${expenses.length ? `<div class="table-wrap"><table><thead><tr><th>รายการ</th><th class="money">จำนวน</th><th>หมายเหตุ</th></tr></thead><tbody>${expenses.map(x=>`<tr><td>${escapeHtml(x.name)}</td><td class="money">${money(x.amount)}</td><td>${escapeHtml(x.note||"")}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">ไม่มีรายจ่ายอื่น</div>`}</div>
-  </div>`;
-}
-function bindMonthlyDetails(){
-  $$(".monthly-detail-btn").forEach(btn=>btn.onclick=()=>{
-    const row = document.getElementById(btn.dataset.target);
-    if(!row) return;
-    row.classList.toggle("hidden");
-    btn.textContent = row.classList.contains("hidden") ? "ดูรายละเอียด" : "ซ่อนรายละเอียด";
-  });
 }
 function dailyRowsToCsv(rows){
   const headers = ["date","thaiDate","branchId","branchName","closed","workerNames","grossSales","discount","netSales","cashSales","transferSales","lineMan","grab","totalAll","avgPerPerson","cashOpen","cashClose","milkCost","otherExpenseTotal","ownerCashOut","cashShouldRemain","cashDiff","cupsUsed","note"];
@@ -1257,7 +1241,7 @@ async function loadCompensation(){
     row.oninput = ()=>recalcCompRow(row);
     $(".save-comp", row).onclick = ()=>saveCompRow(row, monthKey);
     $(".share-comp", row).onclick = ()=>shareCompSummary(row, monthKey);
-    $(".pdf-comp", row).onclick = ()=>printCompPdf(row, monthKey);
+    $(".pdf-comp", row).onclick = ()=>openCompPdfPreview(row, monthKey);
     recalcCompRow(row);
   });
   updateOnlineUi();
@@ -1318,46 +1302,69 @@ async function shareCompSummary(row, monthKey){
     }
   }
 }
-function buildCompSummaryData(row, monthKey){
+function compSummaryData(row, monthKey){
   recalcCompRow(row);
   const userId = row.dataset.user;
-  const salary = numberValue($(".comp-salary", row).value);
-  const employeeSS = salary * 0.05;
-  const employerSS = salary * 0.05;
+  const salary = numberValue($(".comp-salary", row)?.value);
   return {
-    monthKey, monthText:thaiMonth(monthKey), userId, userName:userName(userId), role:ROLE_LABELS[appState.users.find(u=>u.id===userId)?.role] || "",
-    salary, otOther:numberValue($(".comp-ot", row).value), dessertOT:numberValue($(".comp-dessert", row).dataset.value),
-    boothBonus:numberValue($(".comp-booth", row).value), dailyBonus:numberValue($(".comp-daily", row).dataset.value), monthlyBonus:numberValue($(".comp-monthly", row).dataset.value),
-    deduction:numberValue($(".comp-deduction", row).value), deductionNote:$(".comp-deduction-note", row).value.trim(),
-    advances:numberValue($(".comp-advance", row).dataset.value), employeeSS, employerSS,
-    netTransfer:numberValue($(".comp-transfer", row).textContent), totalCost:numberValue($(".comp-cost", row).textContent),
-    preparedBy:appState.currentUser.name, preparedAt:new Date().toISOString()
+    userId,
+    name:userName(userId),
+    month:thaiMonth(monthKey),
+    salary:numberValue($(".comp-salary", row).value),
+    otOther:numberValue($(".comp-ot", row).value),
+    dessert:numberValue($(".comp-dessert", row).dataset.value),
+    booth:numberValue($(".comp-booth", row).value),
+    daily:numberValue($(".comp-daily", row).dataset.value),
+    monthly:numberValue($(".comp-monthly", row).dataset.value),
+    deduction:numberValue($(".comp-deduction", row).value),
+    deductionNote:$(".comp-deduction-note", row).value.trim(),
+    advance:numberValue($(".comp-advance", row).dataset.value),
+    employeeSS:salary * .05,
+    employerSS:salary * .05,
+    transfer:numberValue($(".comp-transfer", row).textContent),
+    totalCost:numberValue($(".comp-cost", row).textContent)
   };
 }
-function printCompPdf(row, monthKey){
-  const d = buildCompSummaryData(row, monthKey);
-  const rows = [
-    ["เงินเดือน", d.salary], ["OT เพิ่มอื่น ๆ", d.otOther], ["OT ทำขนม", d.dessertOT], ["เงินเพิ่มออกบูธ", d.boothBonus],
-    ["โบนัสรายวัน", d.dailyBonus], ["โบนัสรายเดือน", d.monthlyBonus], ["หักเงิน", -d.deduction], ["เบิกล่วงหน้า", -d.advances],
-    ["ประกันสังคมฝ่ายลูกจ้าง 5%", -d.employeeSS]
-  ];
-  const html = `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>สรุปค่าตอบแทน ${escapeHtml(d.userName)} ${escapeHtml(d.monthText)}</title>
-  <style>
-    @page{size:A4;margin:14mm} body{font-family:Tahoma,Arial,sans-serif;color:#1b1b1b;line-height:1.45} .head{display:flex;gap:14px;align-items:center;border-bottom:3px solid #436b2a;padding-bottom:12px;margin-bottom:14px} img{width:70px;height:70px;object-fit:contain}.brand h1{margin:0;color:#436b2a}.brand p{margin:3px 0}.box{border:1px solid #ddd;border-radius:12px;padding:14px;margin:12px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:9px;text-align:left}th{background:#eef7e9}.money{text-align:right}.total{font-size:20px;font-weight:bold;background:#eef7e9}.note{white-space:pre-wrap}.muted{color:#666;font-size:12px}@media print{button{display:none}}
-  </style></head><body>
-    <div class="head"><img src="${escapeHtml(appState.settings.logoUrl || './icons/icon-192.png')}"><div class="brand"><h1>${escapeHtml(appState.settings.storeName || 'Love Matcha')}</h1><p>สรุปค่าตอบแทนรายเดือน</p><p class="muted">${escapeHtml(VERSION)}</p></div></div>
-    <div class="box grid"><div><b>เดือน</b><br>${escapeHtml(d.monthText)}</div><div><b>ชื่อ</b><br>${escapeHtml(d.userName)} ${d.role?`(${escapeHtml(d.role)})`:''}</div><div><b>จัดทำโดย</b><br>${escapeHtml(d.preparedBy)}</div><div><b>วันที่ออกเอกสาร</b><br>${formatTs(d.preparedAt)}</div></div>
-    <div class="box"><h2>รายละเอียดเงิน</h2><table><thead><tr><th>รายการ</th><th class="money">จำนวนเงิน</th></tr></thead><tbody>${rows.map(([name,val])=>`<tr><td>${escapeHtml(name)}</td><td class="money">${money(val)} บาท</td></tr>`).join('')}<tr class="total"><td>ยอดที่ต้องโอนปลายเดือน</td><td class="money">${money(d.netTransfer)} บาท</td></tr><tr><td>ต้นทุนรวม + ประกันสังคมนายจ้าง</td><td class="money">${money(d.totalCost)} บาท</td></tr></tbody></table></div>
-    <div class="box"><b>รายละเอียดหักเงิน / หมายเหตุ</b><div class="note">${escapeHtml(d.deductionNote || '-')}</div></div>
-    <p class="muted">เอกสารนี้สร้างจากระบบ Love Matcha Sales กรุณาตรวจสอบกับเจ้าของหรือผู้จัดการหากมีข้อสงสัย</p>
-    <button onclick="window.print()">บันทึกเป็น PDF / พิมพ์</button>
-    <script>setTimeout(()=>window.print(),500)<\/script>
-  </body></html>`;
-  const w = window.open("", "_blank");
-  if(!w) return showToast("เบราว์เซอร์บล็อกหน้าต่างใหม่ กรุณาอนุญาต Popup ก่อน");
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+function compSlipHtml(d){
+  const line = (label, value, strong=false)=>`<div class="slip-line ${strong?"strong":""}"><span>${label}</span><b>${value}</b></div>`;
+  return `<div class="comp-slip" id="compSlipPrintArea">
+    <div class="slip-head">
+      <img src="${escapeHtml(appState.settings.logoUrl || "./icons/icon-192.png")}" alt="logo">
+      <div><h2>สรุปค่าตอบแทน</h2><p>Love Matcha • ${escapeHtml(d.month)}</p></div>
+    </div>
+    <div class="slip-person"><b>ชื่อ:</b> ${escapeHtml(d.name)}</div>
+    ${line("เงินเดือน", money(d.salary)+" บาท")}
+    ${line("OT เพิ่มอื่น ๆ", money(d.otOther)+" บาท")}
+    ${line("OT ทำขนม", money(d.dessert)+" บาท")}
+    ${line("เงินเพิ่มออกบูธ", money(d.booth)+" บาท")}
+    ${line("โบนัสรายวัน", money(d.daily)+" บาท")}
+    ${line("โบนัสรายเดือน", money(d.monthly)+" บาท")}
+    ${line("หักเงิน", "- "+money(d.deduction)+" บาท")}
+    ${d.deductionNote ? `<div class="slip-note"><b>รายละเอียดหักเงิน:</b> ${escapeHtml(d.deductionNote)}</div>` : ""}
+    ${line("เงินเบิกล่วงหน้า", "- "+money(d.advance)+" บาท")}
+    ${line("ประกันสังคมฝ่ายลูกจ้าง 5%", "- "+money(d.employeeSS)+" บาท")}
+    ${line("ยอดที่ต้องโอนปลายเดือน", money(d.transfer)+" บาท", true)}
+    <div class="slip-foot">หมายเหตุ: ประกันสังคมฝ่ายนายจ้าง 5% = ${money(d.employerSS)} บาท / ต้นทุนรวมพร้อม ปกส.นายจ้าง = ${money(d.totalCost)} บาท</div>
+  </div>`;
+}
+function openCompPdfPreview(row, monthKey){
+  const d = compSummaryData(row, monthKey);
+  let modal = document.getElementById("compPdfModal");
+  if(!modal){
+    modal = document.createElement("div");
+    modal.id = "compPdfModal";
+    modal.className = "modal hidden";
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `<div class="modal-card">
+    <div class="modal-actions no-print"><button class="btn ghost" id="closeCompPdf">ปิดกลับหน้าเดิม</button><button class="btn secondary" id="shareCompPdfText">แชร์ข้อความ</button><button class="btn" id="printCompPdf">สร้าง/บันทึก PDF</button></div>
+    ${compSlipHtml(d)}
+    <div class="state ok no-print">กด “สร้าง/บันทึก PDF” แล้วเลือก “บันทึกเป็น PDF” จากหน้าพิมพ์ จากนั้นนำไฟล์ไปส่งใน LINE ได้</div>
+  </div>`;
+  modal.classList.remove("hidden");
+  $("#closeCompPdf").onclick = ()=>modal.classList.add("hidden");
+  $("#printCompPdf").onclick = ()=>window.print();
+  $("#shareCompPdfText").onclick = ()=>shareCompSummary(row, monthKey);
 }
 async function saveCompRow(row, monthKey){
   if(!requireOnline()) return;
@@ -1383,16 +1390,20 @@ async function saveCompRow(row, monthKey){
 }
 async function renderHistory(){
   if(!isOwnerOrManager()) return content().innerHTML = `<div class="state error">ไม่มีสิทธิ์เข้าหน้านี้</div>`;
-  content().innerHTML = `${pageTitle("ประวัติ", "แสดงเฉพาะรายการสำคัญ ส่วน login แยกไว้ให้เจ้าของดู")}` +
-    `${isOwner()?`<div class="tabbar"><button class="tab-btn active" data-history-tab="main">ประวัติสำคัญ</button><button class="tab-btn" data-history-tab="login">Login / ระบบ</button></div>`:""}` +
-    `<div id="historyResult" class="panel"><div class="loading">กำลังโหลดประวัติ...</div></div>`;
-  if(isOwner()){
-    $$("[data-history-tab]").forEach(btn=>btn.onclick=()=>{
-      $$("[data-history-tab]").forEach(b=>b.classList.toggle("active", b===btn));
-      loadHistory(btn.dataset.historyTab);
-    });
-  }
+  content().innerHTML = `${pageTitle("ประวัติ", isOwner()?"ประวัติยอดขาย/เช็คชื่อ และประวัติระบบแยกสำหรับเจ้าของ":"ประวัติยอดขายและเช็คชื่อ")}
+    <div class="panel">
+      <div class="tabs">
+        <button id="historyMainTab" class="btn small secondary">ยอดขาย / เช็คชื่อ</button>
+        ${isOwner()?`<button id="historySystemTab" class="btn small ghost">ประวัติระบบอื่น ๆ</button>`:""}
+      </div>
+      <div id="historyResult"><div class="loading">กำลังโหลดประวัติ...</div></div>
+    </div>`;
+  $("#historyMainTab").onclick = ()=>loadHistory("main");
+  if(isOwner()) $("#historySystemTab").onclick = ()=>loadHistory("system");
   await loadHistory("main");
+}
+function isMainHistoryAction(action){
+  return ["เพิ่มยอดขาย","แก้ไขยอดขาย","เช็คชื่อ"].includes(action);
 }
 function formatAuditDetails(row){
   const d = row.details || {};
@@ -1402,57 +1413,52 @@ function formatAuditDetails(row){
   if(d.branch) parts.push(`สาขา ${d.branch}`);
   if(d.user) parts.push(`ผู้เกี่ยวข้อง ${d.user}`);
   if(d.status) parts.push(`สถานะ ${d.status}`);
-  if(d.name) parts.push(`ชื่อ ${d.name}`);
-  if(d.role) parts.push(`ระดับ ${d.role}`);
-  if(d.selectedUser) parts.push(`เลือกชื่อ ${d.selectedUser}`);
-  if(d.backupType) parts.push(`ชนิด ${d.backupType}`);
   const before = row.before || {};
   const after = row.after || {};
-  if(row.action.includes("ยอดขาย") && after.date){
-    parts.push(`รายได้รวมทั้งหมด ${money(after.totalAll)} บาท`);
+  if(row.action.includes("ยอดขาย") && (after.date || d.date)){
     if(after.closed) parts.push("บันทึกเป็นวันหยุด");
+    else {
+      parts.push(`รายได้รวม ${money(after.netSales)} บาท`);
+      parts.push(`Line Man ${money(after.lineMan)} / Grab ${money(after.grab)}`);
+      parts.push(`รายได้รวมทั้งหมด ${money(after.totalAll)} บาท`);
+      if(after.cashDiff !== undefined) parts.push(`เงินสดขาด/เกิน ${money(after.cashDiff)} บาท`);
+    }
   }
-  if(row.action.includes("ค่าตอบแทน") && after.netTransfer !== undefined){
-    parts.push(`ยอดโอนปลายเดือน ${money(after.netTransfer)} บาท`);
-  }
-  if(row.action.includes("เงินเบิกล่วงหน้า") && d.amount) parts.push(`จำนวน ${money(d.amount)} บาท`);
-  if(row.action.includes("เปลี่ยน PIN")) parts.push("มีการเปลี่ยน PIN สำเร็จ");
+  if(row.action === "เช็คชื่อ" && after.status) parts.push(`เช็คชื่อเป็น “${escapeHtml(after.status)}” ${after.reason?`เหตุผล: ${escapeHtml(after.reason)}`:""}`);
+  if(row.action.includes("ค่าตอบแทน") && after.netTransfer !== undefined) parts.push(`ยอดโอนปลายเดือน ${money(after.netTransfer)} บาท`);
   if(row.action === "login_success") parts.push("เข้าสู่ระบบสำเร็จ");
   if(row.action === "login_failed") parts.push("เข้าสู่ระบบไม่สำเร็จ");
-  if(!parts.length && Object.keys(d).length) parts.push(Object.entries(d).map(([k,v])=>`${k}: ${v}`).join(" / "));
+  if(!parts.length && Object.keys(d).length) parts.push(Object.entries(d).map(([k,v])=>`${escapeHtml(k)}: ${escapeHtml(v)}`).join(" / "));
   if(!parts.length && (before.id || after.id)) parts.push("มีการแก้ไขข้อมูลในระบบ");
   return parts.join("<br>") || "-";
 }
-function historyRowHtml(r){
-  return `<tr class="${r.hidden?"hidden-log":""}">
-    <td>${formatTs(r.createdAt || r.createdAtISO)}</td>
-    <td>${escapeHtml(r.actorName || "-")}<br><small>${ROLE_LABELS[r.role] || ""}</small></td>
-    <td><b>${escapeHtml(r.action)}</b></td>
-    <td>${formatAuditDetails(r)}</td>
-    <td>${isOwner()?`<button class="btn small ${r.hidden?"secondary":"ghost"} write-action toggle-log" data-id="${r.id}" data-hidden="${r.hidden?"1":"0"}">${r.hidden?"แสดงกลับ":"ซ่อน"}</button>`:"-"}</td>
-  </tr>`;
-}
-async function loadHistory(tab="main"){
-  const snap = await getDocs(query(collection(appState.db, "auditLogs"), orderBy("createdAtISO","desc"), limit(250)));
+async function loadHistory(mode="main"){
+  const snap = await getDocs(query(collection(appState.db, "auditLogs"), orderBy("createdAtISO","desc"), limit(300)));
   let rows = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(r=>!HIDDEN_HISTORY_ACTIONS.has(r.action));
-  if(tab === "login"){
-    if(!isOwner()) rows = [];
-    rows = rows.filter(r=>LOGIN_HISTORY_ACTIONS.has(r.action) || r.action === "เช็คชื่อ");
-  }else{
-    rows = rows.filter(r=>MAIN_HISTORY_ACTIONS.has(r.action) && !LOGIN_HISTORY_ACTIONS.has(r.action));
-    if(!isOwner()) rows = rows.filter(r=>!r.hidden);
-  }
-  const title = tab === "login" ? "Login / ระบบ / เช็คชื่อ" : "รายการสำคัญล่าสุด";
+  rows = mode === "main" ? rows.filter(r=>isMainHistoryAction(r.action)) : rows.filter(r=>!isMainHistoryAction(r.action));
+  if(mode === "system" && !isOwner()) rows = [];
+  if(!isOwner()) rows = rows.filter(r=>!r.hidden);
+  $("#historyMainTab")?.classList.toggle("secondary", mode==="main");
+  $("#historyMainTab")?.classList.toggle("ghost", mode!=="main");
+  $("#historySystemTab")?.classList.toggle("secondary", mode==="system");
+  $("#historySystemTab")?.classList.toggle("ghost", mode!=="system");
+  const showHide = isOwner() && mode === "main";
   $("#historyResult").innerHTML = `
-    <div class="flex"><h3>${title}</h3><button id="reloadHistory" class="btn secondary small">โหลดใหม่</button></div>
+    <div class="flex"><h3>${mode==="main"?"ประวัติยอดขายและเช็คชื่อ":"ประวัติระบบอื่น ๆ"}</h3><button id="reloadHistory" class="btn secondary small">โหลดใหม่</button></div>
     ${rows.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>เวลา</th><th>ผู้ทำ</th><th>รายการ</th><th>รายละเอียด</th><th>ซ่อน</th></tr></thead>
-      <tbody>${rows.map(historyRowHtml).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีประวัติ</div>`}`;
-  $("#reloadHistory").onclick = ()=>loadHistory(tab);
+      <thead><tr><th>เวลา</th><th>ผู้ทำ</th><th>รายการ</th><th>รายละเอียด</th>${showHide?`<th>ซ่อน</th>`:""}</tr></thead>
+      <tbody>${rows.map(r=>`<tr class="${r.hidden?"hidden-log":""}">
+        <td>${formatTs(r.createdAt || r.createdAtISO)}</td>
+        <td>${escapeHtml(r.actorName || "-")}<br><small>${ROLE_LABELS[r.role] || ""}</small></td>
+        <td><b>${escapeHtml(r.action)}</b></td>
+        <td>${formatAuditDetails(r)}</td>
+        ${showHide?`<td><button class="btn small ${r.hidden?"secondary":"ghost"} write-action toggle-log" data-id="${r.id}" data-hidden="${r.hidden?"1":"0"}">${r.hidden?"แสดงกลับ":"ซ่อน"}</button></td>`:""}
+      </tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีประวัติ</div>`}`;
+  $("#reloadHistory").onclick = ()=>loadHistory(mode);
   $$(".toggle-log").forEach(btn=>btn.onclick=async ()=>{
     if(!requireOnline()) return;
     await updateDoc(doc(appState.db, "auditLogs", btn.dataset.id), {hidden:btn.dataset.hidden!=="1", updatedAt:serverTimestamp()});
-    await loadHistory(tab);
+    await loadHistory(mode);
   });
   updateOnlineUi();
 }
@@ -1777,7 +1783,7 @@ async function renderSettings(){
     ${pageTitle("ตั้งค่า", "ปรับสี ชื่อร้าน สาขา และโบนัส")}
     <div class="panel">
       <h3>หน้าตาเว็บ</h3>
-      ${!isOwner()?`<div class="state warn">ผู้จัดการปรับได้เฉพาะเกณฑ์โบนัส/OT และสาขาตามสิทธิ์ ส่วนสี/โลโก้ให้เจ้าของปรับ</div>`:""}
+      ${!isOwner()?`<div class="state warn">ผู้จัดการปรับได้เฉพาะเกณฑ์โบนัสและสาขาตามสิทธิ์ ส่วนสี/โลโก้ให้เจ้าของปรับ</div>`:""}
       <div class="grid three">
         <div class="field"><label>ชื่อร้าน</label><input id="setStoreName" value="${escapeHtml(s.storeName)}" ${isOwner()?"":"disabled"}></div>
         <div class="field"><label>สีหลัก</label><input id="setPrimary" type="color" value="${escapeHtml(s.primaryColor)}" ${isOwner()?"":"disabled"}></div>
@@ -1820,6 +1826,7 @@ async function renderSettings(){
       <div class="field"><label>สาขาที่ใช้เกณฑ์เฉพาะ</label><div class="check-list">${activeBranches().map(b=>`<label class="check-item"><input class="monthly-branch" type="checkbox" value="${b.id}" ${(s.monthlyBonus?.selectedBranchIds||[]).includes(b.id)?"checked":""}> ${escapeHtml(b.name)}</label>`).join("")}</div></div>
       <button id="saveMonthlyBonus" class="btn write-action" style="margin-top:10px">บันทึกโบนัสรายเดือน</button>
     </div>`;
+
   $("#setLogoFile")?.addEventListener("change", readLogoFile);
   $("#saveVisualSettings").onclick = saveVisualSettings;
   $("#addBranch").onclick = ()=>{ appState.branches.push({id:uid("branch"), name:"สาขาใหม่", active:true, order:appState.branches.length+1}); $("#branchesSettings").innerHTML = branchSettingRows(); };
@@ -1926,6 +1933,7 @@ async function saveDessertSettings(){
   await updateSettings({...appState.settings, dessertItems}, "ตั้งค่า OT ทำขนม");
   normalizeSettings();
   showToast("บันทึก OT ทำขนมแล้ว");
+  if(appState.currentPage === "compensation") await renderCompensation();
 }
 
 // Defensive: expose a tiny diagnostic for support
