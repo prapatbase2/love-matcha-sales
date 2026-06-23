@@ -114,7 +114,26 @@ body.is-offline #pageContent textarea{
   color:#777;
 }
 .offline-locked{cursor:not-allowed!important}
-
-.comp-row input.wide-money{min-width:120px}
-.comp-row .comp-ot-note,.comp-row .comp-deduction-note{min-width:180px}
-.user-mini{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.detail-card{background:#fbfdf9;border:1px solid var(--line);border-radius:14px;padding:12px}
+.detail-card ul{margin:6px 0 0;padding-left:22px}
+.modal{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.42);padding:16px;overflow:auto;display:flex;align-items:flex-start;justify-content:center}
+.modal-card{width:min(760px,100%);background:#fff;border-radius:22px;border:1px solid var(--line);padding:14px;box-shadow:0 18px 60px rgba(0,0,0,.22)}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-bottom:12px}
+.comp-slip{background:#fff;border:1px solid var(--line);border-radius:18px;padding:22px;color:#17210f}
+.slip-head{display:flex;gap:12px;align-items:center;border-bottom:2px solid var(--line);padding-bottom:12px;margin-bottom:12px}
+.slip-head img{width:64px;height:64px;border-radius:16px;object-fit:cover;border:1px solid var(--line)}
+.slip-head h2{margin:0;color:var(--primary-dark)}
+.slip-head p{margin:4px 0 0;color:var(--muted)}
+.slip-person{background:var(--secondary);border-radius:14px;padding:12px;margin:12px 0;font-size:1.08rem}
+.slip-line{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px dashed var(--line)}
+.slip-line.strong{background:#f2f8ee;border:1px solid var(--line);border-radius:14px;padding:12px;margin-top:12px;font-size:1.15rem;color:var(--primary-dark)}
+.slip-note,.slip-foot{font-size:.92rem;color:var(--muted);padding:8px 0;line-height:1.6}
+@media print{
+  body *{visibility:hidden!important}
+  #compPdfModal,#compPdfModal *{visibility:visible!important}
+  #compPdfModal{position:static!important;inset:auto!important;background:#fff!important;padding:0!important;display:block!important}
+  #compPdfModal .modal-card{box-shadow:none!important;border:0!important;width:100%!important;padding:0!important}
+  .no-print{display:none!important}
+  #compSlipPrintArea{border:0!important;border-radius:0!important}
+}
