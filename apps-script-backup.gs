@@ -1,114 +1,163 @@
 /*
-  Love Matcha Sales v1.3.1 Backup Web App
+  Love Matcha Sales Backup Web App v1.3.2
 
-  ทำหน้าที่รับข้อมูล backup จากเว็บ แล้วบันทึกใน Google Drive 2 แบบพร้อมกัน:
-  1) ไฟล์ .json สำหรับ Restore ตรงในแอป
-  2) Google Sheet สำหรับเปิดตรวจ / ดาวน์โหลดเป็น Excel แล้ว Restore ในแอปได้
+  โค้ดนี้ใช้แทน Code.gs ใน Google Apps Script ทั้งไฟล์
+  หน้าที่:
+  - GET ?action=test  = บังคับสร้างไฟล์ TEST ทั้ง JSON และ Google Sheet ใน Drive
+  - POST payload      = รับ Backup จากแอป แล้วสร้างไฟล์ JSON และ Google Sheet ใน Drive
+  - ตอบกลับพร้อม folderUrl / jsonUrl / sheetUrl เพื่อเช็กได้ชัดเจนว่าไฟล์ถูกสร้างที่ไหน
 
-  วิธี Deploy แบบย่อ:
-  - เปิด https://script.google.com > New project
-  - วางโค้ดนี้ใน Code.gs
-  - กด Save
-  - Deploy > New deployment > Web app
-  - Execute as: Me
-  - Who has access: Anyone
-  - Copy Web app URL ไปวางในหน้า “สำรอง” ของแอป Love Matcha
+  สำคัญ:
+  1) หลังวางโค้ด ต้อง Deploy > Manage deployments > Edit > Version: New version > Deploy
+  2) Execute as: Me
+  3) Who has access: Anyone
 */
 
+const BACKUP_APP_VERSION = 'Love Matcha Sales Backup v1.3.2';
 const BACKUP_FOLDER_NAME = 'LoveMatcha_Backups';
-const MAX_CELL_CHARS = 45000; // กันข้อมูลต่อช่องใหญ่เกิน limit ของ Google Sheet
+
+// ถ้ามีโฟลเดอร์ LoveMatcha_Backups ซ้ำหลายอัน ให้ใส่ Folder ID ของโฟลเดอร์ที่ต้องการไว้ตรงนี้
+// วิธีหา Folder ID: เปิดโฟลเดอร์ใน Drive แล้วดู URL เช่น /folders/1AbCxxx => เอา 1AbCxxx มาใส่
+const BACKUP_FOLDER_ID = '';
+
+const MAX_CELL_CHARS = 45000;
 
 function doGet(e) {
-  const folder = getOrCreateFolder_();
-  const action = e && e.parameter && e.parameter.action ? String(e.parameter.action) : '';
+  try {
+    const action = getParam_(e, 'action');
+    if (action === 'test' || action === 'force-test' || action === 'create-test') {
+      const testObj = makeTestPayload_('GET_TEST');
+      const result = saveBackup_(testObj, 'TEST');
+      result.message = 'สร้างไฟล์ TEST ใน Google Drive แล้ว ถ้าไม่เห็นในโฟลเดอร์ที่เปิดอยู่ ให้กด folderUrl ในผลลัพธ์นี้';
+      result.method = 'GET';
+      return json_(result);
+    }
 
-  // ใช้สำหรับกดปุ่ม “ทดสอบสร้างไฟล์ใน Drive” จากหน้าแอป
-  // ถ้าการ Deploy และสิทธิ์ถูกต้อง จะมีไฟล์ TEST ทั้ง .json และ Google Sheet โผล่ใน Drive ทันที
-  if (action === 'test') {
-    const testObj = {
-      app: 'Love Matcha Sales',
-      version: 'TEST',
-      exportedAt: new Date().toISOString(),
-      note: 'ไฟล์นี้สร้างจากการทดสอบ Google Apps Script Web App URL',
-      collections: { test: [{id: 'test', data: {ok: true, createdAtISO: new Date().toISOString()}}] }
-    };
-    const result = saveBackup_(testObj, 'TEST');
-    result.message = 'สร้างไฟล์ TEST ใน Google Drive แล้ว กรุณาเปิดโฟลเดอร์ LoveMatcha_Backups';
-    return json_(result);
+    const folder = getBackupFolder_();
+    return json_({
+      ok: true,
+      app: BACKUP_APP_VERSION,
+      message: 'Web App พร้อมใช้งาน ถ้าต้องการทดสอบสร้างไฟล์ให้เติม ?action=test ต่อท้าย URL',
+      folderName: folder.getName(),
+      folderId: folder.getId(),
+      folderUrl: folder.getUrl(),
+      time: new Date().toISOString()
+    });
+  } catch (err) {
+    return json_(errorObject_(err, 'doGet'));
   }
-
-  return json_({
-    ok: true,
-    app: 'Love Matcha Sales Backup v1.3.1',
-    message: 'Web App พร้อมใช้งาน: รับ POST แล้วสร้างทั้ง JSON และ Google Sheet ใน Drive',
-    folderName: folder.getName(),
-    time: new Date().toISOString()
-  });
 }
 
 function doPost(e) {
   try {
-    // รับได้ทั้งแบบ raw POST และแบบ form field ชื่อ payload
-    // v1.3.1 หน้าเว็บจะส่งแบบ hidden form เพื่อเลี่ยงปัญหา browser CORS/no-cors
-    const formPayload = e && e.parameter && e.parameter.payload ? e.parameter.payload : '';
-    const rawPayload = e && e.postData && e.postData.contents ? e.postData.contents : '';
-    const raw = formPayload || rawPayload || '{}';
-    const obj = JSON.parse(raw);
-    return json_(saveBackup_(obj, ''));
+    const action = getParam_(e, 'action');
+    let obj;
+
+    if (action === 'test' || action === 'force-test' || action === 'create-test') {
+      obj = makeTestPayload_('POST_TEST');
+      const result = saveBackup_(obj, 'TEST');
+      result.message = 'สร้างไฟล์ TEST จาก POST ใน Google Drive แล้ว';
+      result.method = 'POST_TEST';
+      return json_(result);
+    }
+
+    const raw = readPayload_(e);
+    obj = JSON.parse(raw);
+    const result = saveBackup_(obj, '');
+    result.method = 'POST_BACKUP';
+    return json_(result);
   } catch (err) {
-    return json_({ok:false, error:String(err && err.message ? err.message : err), time:new Date().toISOString()});
+    return json_(errorObject_(err, 'doPost'));
   }
 }
 
-function saveBackup_(obj, prefix) {
-  const folder = getOrCreateFolder_();
-  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'Asia/Bangkok', 'yyyy-MM-dd_HH-mm-ss');
-  const tag = prefix ? `${prefix}_` : '';
+function readPayload_(e) {
+  if (e && e.parameter && e.parameter.payload) return String(e.parameter.payload);
+  if (e && e.postData && e.postData.contents) return String(e.postData.contents);
+  throw new Error('ไม่พบ payload ที่ส่งมา');
+}
 
-  // 1) JSON backup สำหรับ Restore ตรงในแอป
-  const jsonName = `LoveMatcha_${tag}Backup_${stamp}.json`;
-  const pretty = JSON.stringify(obj, null, 2);
-  const jsonFile = folder.createFile(jsonName, pretty, MimeType.JSON);
+function getParam_(e, name) {
+  return e && e.parameter && e.parameter[name] ? String(e.parameter[name]) : '';
+}
 
-  // 2) Google Sheet backup สำหรับเปิดดู / ดาวน์โหลดเป็น Excel
-  const ssName = `LoveMatcha_${tag}Backup_${stamp}`;
-  const ss = SpreadsheetApp.create(ssName);
-  const ssFile = DriveApp.getFileById(ss.getId());
-  try { ssFile.moveTo(folder); }
-  catch (moveErr) {
-    // fallback สำหรับบัญชีที่ยังใช้เมธอดเดิมได้
-    folder.addFile(ssFile);
-    try { DriveApp.getRootFolder().removeFile(ssFile); } catch (ignore) {}
-  }
-  writeBackupToSpreadsheet_(ss, obj);
-
+function makeTestPayload_(source) {
   return {
-    ok: true,
-    jsonFileName: jsonName,
-    jsonFileId: jsonFile.getId(),
-    jsonUrl: jsonFile.getUrl(),
-    sheetName: ssName,
-    sheetId: ss.getId(),
-    sheetUrl: ss.getUrl(),
-    collections: countCollections_(obj),
-    time: new Date().toISOString()
+    app: 'Love Matcha Sales',
+    version: 'TEST_BY_APPS_SCRIPT_' + source,
+    exportedAt: new Date().toISOString(),
+    note: 'ไฟล์นี้สร้างจากปุ่มทดสอบ Google Apps Script Web App URL',
+    collections: {
+      test: [
+        {id: 'test_' + Date.now(), data: {ok: true, source: source, createdAtISO: new Date().toISOString()}}
+      ]
+    }
   };
 }
 
+function saveBackup_(obj, prefix) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const folder = getBackupFolder_();
+    const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'Asia/Bangkok', 'yyyy-MM-dd_HH-mm-ss');
+    const tag = prefix ? prefix + '_' : '';
+
+    const jsonName = 'LoveMatcha_' + tag + 'Backup_' + stamp + '.json';
+    const pretty = JSON.stringify(obj || {}, null, 2);
+    const jsonFile = folder.createFile(jsonName, pretty, 'application/json');
+
+    const ssName = 'LoveMatcha_' + tag + 'Backup_' + stamp;
+    const ss = SpreadsheetApp.create(ssName);
+    const ssFile = DriveApp.getFileById(ss.getId());
+    moveFileToFolder_(ssFile, folder);
+    writeBackupToSpreadsheet_(ss, obj || {});
+
+    return {
+      ok: true,
+      app: BACKUP_APP_VERSION,
+      folderName: folder.getName(),
+      folderId: folder.getId(),
+      folderUrl: folder.getUrl(),
+      jsonFileName: jsonName,
+      jsonFileId: jsonFile.getId(),
+      jsonUrl: jsonFile.getUrl(),
+      sheetName: ssName,
+      sheetId: ss.getId(),
+      sheetUrl: ss.getUrl(),
+      collections: countCollections_(obj || {}),
+      time: new Date().toISOString()
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function moveFileToFolder_(file, folder) {
+  try {
+    file.moveTo(folder);
+  } catch (err) {
+    folder.addFile(file);
+    try { DriveApp.getRootFolder().removeFile(file); } catch (ignore) {}
+  }
+}
+
 function writeBackupToSpreadsheet_(ss, obj) {
-  const old = ss.getSheets();
-  const first = old[0];
+  const first = ss.getSheets()[0];
   first.setName('_README');
   first.clear();
-  first.getRange(1, 1, 8, 2).setValues([
+  first.getRange(1, 1, 11, 2).setValues([
     ['app', obj.app || 'Love Matcha Sales'],
+    ['backupWebAppVersion', BACKUP_APP_VERSION],
     ['version', obj.version || ''],
     ['exportedAt', obj.exportedAt || new Date().toISOString()],
+    ['folderName', BACKUP_FOLDER_NAME],
+    ['folderId', getBackupFolder_().getId()],
     ['restoreHow', 'ดาวน์โหลดไฟล์นี้เป็น Microsoft Excel (.xlsx) แล้วเลือกไฟล์ในหน้า Restore ของแอป'],
     ['format', 'แต่ละ sheet ใช้คอลัมน์ id และ json เพื่อเก็บเอกสาร Firestore'],
     ['warning', 'อย่าแก้ไขคอลัมน์ id/json ถ้าต้องการ Restore กลับเข้าระบบ'],
     ['createdBy', 'Google Apps Script Web App'],
-    ['folder', BACKUP_FOLDER_NAME]
+    ['createdAt', new Date().toISOString()]
   ]);
   first.autoResizeColumns(1, 2);
 
@@ -130,6 +179,15 @@ function writeBackupToSpreadsheet_(ss, obj) {
   });
 }
 
+function getBackupFolder_() {
+  if (BACKUP_FOLDER_ID && BACKUP_FOLDER_ID.trim()) {
+    return DriveApp.getFolderById(BACKUP_FOLDER_ID.trim());
+  }
+  const folders = DriveApp.getFoldersByName(BACKUP_FOLDER_NAME);
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder(BACKUP_FOLDER_NAME);
+}
+
 function countCollections_(obj) {
   const out = {};
   const collections = obj.collections || {};
@@ -141,12 +199,17 @@ function safeSheetName_(name) {
   return String(name || 'sheet').replace(/[\\\/\?\*\[\]\:]/g, '_').slice(0, 90);
 }
 
-function getOrCreateFolder_() {
-  const folders = DriveApp.getFoldersByName(BACKUP_FOLDER_NAME);
-  if (folders.hasNext()) return folders.next();
-  return DriveApp.createFolder(BACKUP_FOLDER_NAME);
+function errorObject_(err, at) {
+  return {
+    ok: false,
+    app: BACKUP_APP_VERSION,
+    at: at,
+    error: String(err && err.message ? err.message : err),
+    stack: String(err && err.stack ? err.stack : ''),
+    time: new Date().toISOString()
+  };
 }
 
 function json_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+  return ContentService.createTextOutput(JSON.stringify(obj, null, 2)).setMimeType(ContentService.MimeType.JSON);
 }

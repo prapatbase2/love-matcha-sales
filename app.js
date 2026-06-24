@@ -6,7 +6,7 @@ import {
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const VERSION = "v1.3.1";
+const VERSION = "v1.3.2";
 const DEFAULT_BACKUP_URL = "https://script.google.com/macros/s/AKfycbz7pwTBSDwVwja4ugxvlJoNYb4ksBk7METKzGd3bCARUzea99Sx0BTAJHIDi5N2iW7e/exec";
 const COLLECTIONS = [
   "users","branches","dailySales","dailyDrafts","dailyExpenses","cupCounts","dessertOT",
@@ -1891,9 +1891,9 @@ async function testBackupUrl(){
   if(!requireOnline()) return;
   const url = $("#backupUrl").value.trim();
   if(!url) return showToast("กรุณากรอก URL ก่อน");
-  const testUrl = `${url}${url.includes("?") ? "&" : "?"}action=test&ts=${Date.now()}`;
+  const testUrl = `${url}${url.includes("?") ? "&" : "?"}action=test&source=love_matcha_sales_app&ts=${Date.now()}`;
   window.open(testUrl, "_blank", "noopener,noreferrer");
-  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว ถ้าตั้งค่าสิทธิ์ถูกต้อง Drive จะมีไฟล์ TEST ในโฟลเดอร์ LoveMatcha_Backups ถ้าไม่ขึ้น ให้ไปที่ Apps Script แล้ว Deploy เป็น Web App แบบ Execute as: Me / Who has access: Anyone</div>`;
+  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.3.2 และมี jsonFileName / sheetName / folderUrl ถ้ายังขึ้น v1.2 แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
 }
 async function exportAllSalesCsv(){
   const snap = await getDocs(collection(appState.db, "dailySales"));

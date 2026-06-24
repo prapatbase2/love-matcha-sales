@@ -701,7 +701,7 @@ Love Matcha Sales `v1.0`
 - หน้าเช็คชื่อ: ตารางรายวันแสดงเฉพาะ วันที่/สถานะ/รูปแบบ/เวลา และตารางคนอื่นแสดง วันที่/สถานะ/เหตุผล โดยไม่แสดงค่าจ้าง
 
 
-## หมายเหตุ v1.3.1 แก้ Backup ไป Drive ว่าง
+## หมายเหตุ v1.3.2 แก้ Backup ไป Drive ว่าง
 
 ถ้ากด Backup แล้ว Drive ยังไม่มีไฟล์ ให้เปิด `apps-script-backup.gs` ในชุดไฟล์นี้ คัดลอกไปวางทับ `Code.gs` ใน Apps Script แล้วกด Deploy > Manage deployments > Edit > Version: New version > Deploy เพื่อให้ URL เดิมทำงานกับโค้ดใหม่
 
