@@ -1,4 +1,4 @@
-const CACHE_NAME = "love-matcha-sales-v1.1.0-comp-pdf-history";
+const CACHE_NAME = "love-matcha-sales-v1.2.0-draft-dailyworker-backup-sheet";
 const APP_SHELL = [
   "./",
   "./index.html",
