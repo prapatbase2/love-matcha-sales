@@ -196,7 +196,7 @@ body.is-offline #pageContent textarea{
 }
 
 
-/* v1.3: แถวหยุดร้านแบบสั้น และตารางค่าตอบแทนแยกรายวัน */
+/* v1.3.1: แก้ Backup ไป Drive ด้วย hidden form POST + ปุ่มทดสอบสร้างไฟล์ */
 .closed-short-row .closed-short-cell{background:#fff8df;color:#795200;font-weight:700}
 .comp-row[data-daily-role="1"] .comp-salary{background:#f7f8f5;font-weight:900}
 @media(max-width:680px){

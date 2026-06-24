@@ -6,7 +6,7 @@ import {
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const VERSION = "v1.3";
+const VERSION = "v1.3.1";
 const DEFAULT_BACKUP_URL = "https://script.google.com/macros/s/AKfycbz7pwTBSDwVwja4ugxvlJoNYb4ksBk7METKzGd3bCARUzea99Sx0BTAJHIDi5N2iW7e/exec";
 const COLLECTIONS = [
   "users","branches","dailySales","dailyDrafts","dailyExpenses","cupCounts","dessertOT",
@@ -1788,7 +1788,7 @@ async function renderBackup(){
         <div class="field"><label>&nbsp;</label><button id="saveBackupSetting" class="btn write-action">บันทึกตั้งค่า</button></div>
       </div>
       <div class="flex" style="margin-top:10px">
-        <button id="testBackupUrl" class="btn secondary write-action">ทดสอบเชื่อมต่อ</button>
+        <button id="testBackupUrl" class="btn secondary write-action">ทดสอบสร้างไฟล์ใน Drive</button>
         <button id="manualBackup" class="btn write-action">Backup ไป Drive ตอนนี้</button>
         <button id="exportFullJson" class="btn secondary">Export JSON</button>
         <button id="exportSalesCsv" class="btn secondary">Export CSV ยอดขาย</button>
@@ -1829,29 +1829,71 @@ async function buildFullBackup(){
   }
   return {app:"Love Matcha Sales", version:VERSION, exportedAt:new Date().toISOString(), collections};
 }
+async function submitBackupViaForm(url, payload){
+  // Google Apps Script Web App ไม่ส่ง CORS header ให้ browser อ่านผลได้แน่นอน
+  // จึงใช้ hidden form POST ซึ่งส่งข้ามโดเมนได้เสถียรกว่า fetch no-cors และ Apps Script รับค่า payload ได้โดยตรง
+  return new Promise((resolve, reject)=>{
+    try{
+      const frameName = `backup_frame_${Date.now()}`;
+      const iframe = document.createElement("iframe");
+      iframe.name = frameName;
+      iframe.style.display = "none";
+      document.body.appendChild(iframe);
+
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = url;
+      form.target = frameName;
+      form.enctype = "application/x-www-form-urlencoded";
+      form.style.display = "none";
+
+      const action = document.createElement("input");
+      action.type = "hidden";
+      action.name = "action";
+      action.value = "backup";
+      form.appendChild(action);
+
+      const field = document.createElement("textarea");
+      field.name = "payload";
+      field.value = payload;
+      form.appendChild(field);
+
+      document.body.appendChild(form);
+      form.submit();
+      setTimeout(()=>{
+        form.remove();
+        iframe.remove();
+        resolve(true);
+      }, 3000);
+    }catch(e){
+      reject(e);
+    }
+  });
+}
 async function performBackup(reason="manual", quiet=false){
   if(!requireOnline()) return;
   const backup = await buildFullBackup();
-  const url = appState.settings.autoBackup?.url || $("#backupUrl")?.value?.trim();
+  const url = (appState.settings.autoBackup?.url || $("#backupUrl")?.value || "").trim();
   if(!url) {
     if(!quiet) showToast("ยังไม่ได้กรอก Google Apps Script Web App URL");
     return;
   }
-  await fetch(url, {method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain;charset=utf-8"}, body:JSON.stringify(backup)});
-  await addDoc(collection(appState.db, "backupsMetadata"), {reason, exportedAt:serverTimestamp(), exportedAtISO:new Date().toISOString(), url, collections:Object.fromEntries(Object.entries(backup.collections).map(([k,v])=>[k,v.length])), createdBy:appState.currentUser?.id || null});
-  if(reason !== "pre_restore") await audit("สำรองข้อมูล", {reason, collections:Object.fromEntries(Object.entries(backup.collections).map(([k,v])=>[k,v.length]))});
-  if(!quiet) $("#backupState").innerHTML = `<div class="state ok">ส่ง Backup ไป Google Apps Script แล้ว กรุณาตรวจสอบไฟล์ใน Google Drive</div>`;
+  const counts = Object.fromEntries(Object.entries(backup.collections).map(([k,v])=>[k,v.length]));
+  const payload = JSON.stringify(backup);
+  if(!quiet) $("#backupState").innerHTML = `<div class="state warn">กำลังส่ง Backup ไป Google Drive... ห้ามปิดหน้านี้จนกว่าจะขึ้นข้อความถัดไป</div>`;
+
+  await submitBackupViaForm(url, payload);
+  await addDoc(collection(appState.db, "backupsMetadata"), {reason, exportedAt:serverTimestamp(), exportedAtISO:new Date().toISOString(), url, collections:counts, createdBy:appState.currentUser?.id || null});
+  if(reason !== "pre_restore") await audit("สำรองข้อมูล", {reason, collections:counts});
+  if(!quiet) $("#backupState").innerHTML = `<div class="state ok">ส่งคำขอ Backup ไป Google Apps Script แล้ว รอสักครู่แล้วตรวจใน Google Drive โฟลเดอร์ LoveMatcha_Backups ถ้ายังไม่เห็นไฟล์ ให้กด “ทดสอบสร้างไฟล์ใน Drive” เพื่อตรวจสิทธิ์ Apps Script</div>`;
 }
 async function testBackupUrl(){
   if(!requireOnline()) return;
   const url = $("#backupUrl").value.trim();
   if(!url) return showToast("กรุณากรอก URL ก่อน");
-  try{
-    await fetch(url, {mode:"no-cors"});
-    $("#backupState").innerHTML = `<div class="state ok">ส่งคำขอทดสอบแล้ว ถ้า Apps Script ตั้งค่าถูกต้องจะเปิดใช้งานได้</div>`;
-  }catch(e){
-    $("#backupState").innerHTML = `<div class="state error">ทดสอบไม่สำเร็จ: ${escapeHtml(e.message)}</div>`;
-  }
+  const testUrl = `${url}${url.includes("?") ? "&" : "?"}action=test&ts=${Date.now()}`;
+  window.open(testUrl, "_blank", "noopener,noreferrer");
+  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว ถ้าตั้งค่าสิทธิ์ถูกต้อง Drive จะมีไฟล์ TEST ในโฟลเดอร์ LoveMatcha_Backups ถ้าไม่ขึ้น ให้ไปที่ Apps Script แล้ว Deploy เป็น Web App แบบ Execute as: Me / Who has access: Anyone</div>`;
 }
 async function exportAllSalesCsv(){
   const snap = await getDocs(collection(appState.db, "dailySales"));
