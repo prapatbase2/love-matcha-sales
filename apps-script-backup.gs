@@ -1,5 +1,5 @@
 /*
-  Love Matcha Sales v1.2 Backup Web App
+  Love Matcha Sales v1.3 Backup Web App
 
   ทำหน้าที่รับข้อมูล backup จากเว็บ แล้วบันทึกใน Google Drive 2 แบบพร้อมกัน:
   1) ไฟล์ .json สำหรับ Restore ตรงในแอป
@@ -22,7 +22,7 @@ function doGet(e) {
   const folder = getOrCreateFolder_();
   return json_({
     ok: true,
-    app: 'Love Matcha Sales Backup v1.2',
+    app: 'Love Matcha Sales Backup v1.3',
     message: 'Web App พร้อมใช้งาน: รับ POST แล้วสร้างทั้ง JSON และ Google Sheet ใน Drive',
     folderName: folder.getName(),
     time: new Date().toISOString()

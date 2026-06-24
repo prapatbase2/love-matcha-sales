@@ -6,7 +6,8 @@ import {
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const VERSION = "v1.2";
+const VERSION = "v1.3";
+const DEFAULT_BACKUP_URL = "https://script.google.com/macros/s/AKfycbz7pwTBSDwVwja4ugxvlJoNYb4ksBk7METKzGd3bCARUzea99Sx0BTAJHIDi5N2iW7e/exec";
 const COLLECTIONS = [
   "users","branches","dailySales","dailyDrafts","dailyExpenses","cupCounts","dessertOT",
   "attendance","salaryAdvances","compensationSettings","compensationRecords",
@@ -33,7 +34,7 @@ const DEFAULT_SETTINGS = {
   secondaryColor:"#eef7e9",
   fontScale:1,
   logoUrl:"./icons/logo.png",
-  autoBackup:{mode:"off", intervalMinutes:60, url:""},
+  autoBackup:{mode:"off", intervalMinutes:60, url:DEFAULT_BACKUP_URL},
   advanceAccessUserIds:[],
   dailyWorkerPay:{fullDayAmount:360, halfHourAmount:20},
   dailyBonus:{
@@ -309,6 +310,8 @@ function normalizeSettings(){
   s.advanceAccessUserIds = Array.isArray(s.advanceAccessUserIds) ? s.advanceAccessUserIds : [];
   s.dailyWorkerPay = {fullDayAmount:numberValue(s.dailyWorkerPay?.fullDayAmount || 360), halfHourAmount:numberValue(s.dailyWorkerPay?.halfHourAmount || 20)};
   appState.settings = mergeDeep(clone(DEFAULT_SETTINGS), s);
+  if(!appState.settings.autoBackup) appState.settings.autoBackup = clone(DEFAULT_SETTINGS.autoBackup);
+  if(!appState.settings.autoBackup.url) appState.settings.autoBackup.url = DEFAULT_BACKUP_URL;
 }
 
 function renderFirstSetup(){
@@ -546,10 +549,19 @@ function salesTable(rows, options={}){
   const showDetails = !!options.details;
   return `<div class="table-wrap sales-table-wrap"><table class="sales-table">
     <thead><tr><th>วันที่</th><th>สาขา</th><th>สถานะ</th><th class="money">รายได้รวมทั้งหมด</th><th class="money">ค่านม</th><th class="money">รายจ่ายอื่น</th><th class="money">เงินสดขาด/เกิน</th><th>หมายเหตุ</th>${showDetails?`<th>รายละเอียด</th>`:""}</tr></thead>
-    <tbody>${rows.map((r,i)=>`
-      <tr class="sales-main-row">
+    <tbody>${rows.map((r,i)=>{
+      if(r.closed){
+        const note = r.note ? ` · ${escapeHtml(r.note)}` : "";
+        return `<tr class="sales-main-row closed-short-row">
+          <td data-label="วันที่">${thaiDate(r.date)}</td>
+          <td data-label="สาขา">${escapeHtml(branchName(r.branchId))}</td>
+          <td data-label="สถานะ"><span class="pill warn">หยุดร้าน</span></td>
+          <td data-label="สรุป" colspan="${showDetails?6:5}" class="closed-short-cell"><b>หยุดร้าน</b>${note}</td>
+        </tr>`;
+      }
+      return `<tr class="sales-main-row">
         <td data-label="วันที่">${thaiDate(r.date)}</td><td data-label="สาขา">${escapeHtml(branchName(r.branchId))}</td>
-        <td data-label="สถานะ">${r.closed?`<span class="pill warn">หยุดร้าน</span>`:`<span class="pill ok">เปิดร้าน</span>`}</td>
+        <td data-label="สถานะ"><span class="pill ok">เปิดร้าน</span></td>
         <td data-label="รายได้รวมทั้งหมด" class="money">${money(r.totalAll)}</td>
         <td data-label="ค่านม" class="money">${money(r.milkCost)}</td>
         <td data-label="รายจ่ายอื่น" class="money">${money(r.otherExpenseTotal)}</td>
@@ -557,8 +569,10 @@ function salesTable(rows, options={}){
         <td data-label="หมายเหตุ">${escapeHtml(r.note||"")}</td>
         ${showDetails?`<td data-label="รายละเอียด"><button type="button" class="btn secondary small monthly-detail-btn" data-detail="${i}">แสดงรายละเอียด</button></td>`:""}
       </tr>
-      ${showDetails?`<tr class="monthly-detail-row hidden" data-detail="${i}"><td colspan="9" class="monthly-detail-cell">${monthlySalesDetailHtml(r)}</td></tr>`:""}`.trim()).join("")}</tbody></table></div>`;
+      ${showDetails?`<tr class="monthly-detail-row hidden" data-detail="${i}"><td colspan="9" class="monthly-detail-cell">${monthlySalesDetailHtml(r)}</td></tr>`:""}`;
+    }).join("")}</tbody></table></div>`;
 }
+
 function monthlySalesDetailHtml(r){
   const expenses = r.expenses || [];
   const expensesHtml = expenses.length
@@ -1224,11 +1238,11 @@ function attendanceFormHtml(){
           <div class="field"><label>เลิกงาน</label><select id="dailyEndTime">${dailyTimeOptions("18:00")}</select></div>
         </div>
       </div>
-      <small>รายชั่วโมงเลือกได้ทีละครึ่งชั่วโมง ระหว่าง 08:30-18:00 และค่าตอบแทนต่อวันจะไม่เกินค่าเต็มวัน</small>
     </div>` : ""}
     <div class="sticky-save"><button class="btn full write-action">บันทึกเช็คชื่อ</button></div>
   </form>`;
 }
+
 async function saveAttendance(e){
   e.preventDefault();
   if(!requireOnline()) return;
@@ -1257,31 +1271,38 @@ async function loadAttendanceResult(){
   const snap = await getDocs(query(collection(appState.db, "attendance"), where("monthKey","==",monthKey)));
   const rows = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(r=>r.userId===userId).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
   const count = status => rows.filter(r=>r.status===status).length;
-  const totalDailyPay = user.role === "daily" ? rows.reduce((sum,r)=>sum+calcDailyAttendancePay(r),0) : 0;
+  const isDailyUser = user.role === "daily";
+  const tableHtml = isDailyUser
+    ? (rows.length ? `<div class="table-wrap"><table class="mobile-card-table"><thead><tr><th>วันที่</th><th>สถานะ</th><th>รูปแบบ</th><th>เวลา</th></tr></thead><tbody>${rows.map(r=>`<tr><td data-label="วันที่">${thaiDate(r.date)}</td><td data-label="สถานะ">${escapeHtml(r.status)}</td><td data-label="รูปแบบ">${r.workType==="hourly"?"รายชั่วโมง":(r.workType==="full"?"ทั้งวัน":"-")}</td><td data-label="เวลา">${r.workType==="hourly"?`${escapeHtml(r.startTime)}-${escapeHtml(r.endTime)}`:"-"}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีข้อมูล</div>`)
+    : (rows.length ? `<div class="table-wrap"><table class="mobile-card-table"><thead><tr><th>วันที่</th><th>สถานะ</th><th>เหตุผล</th></tr></thead><tbody>${rows.map(r=>`<tr><td data-label="วันที่">${thaiDate(r.date)}</td><td data-label="สถานะ">${escapeHtml(r.status)}</td><td data-label="เหตุผล">${escapeHtml(r.reason||"")}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีข้อมูล</div>`);
   $("#attResult").innerHTML = `
     ${kpis([
       {label:"ทำงาน", value:`${count("ทำงาน")} วัน`},
       {label:"หยุด", value:`${count("หยุด")} วัน`},
-      ...(user.role === "daily" ? [{label:"ค่าจ้างรายวันโดยประมาณ", value:`${money(totalDailyPay)} บาท`, sub:"คำนวณจากค่าในหน้าค่าตอบแทน"}] : [
+      ...(isDailyUser ? [] : [
         {label:"ลาพักผ่อน", value:`${count("ลาพักผ่อน")} วัน`},
         {label:"ลาป่วย/ลากิจ/อื่น ๆ", value:`${count("ลาป่วย")+count("ลากิจ")+count("อื่น ๆ")} วัน`}
       ])
     ])}
-    <div class="panel"><h3>รายการเช็คชื่อ</h3>
-      ${rows.length ? `<div class="table-wrap"><table class="mobile-card-table"><thead><tr><th>วันที่</th><th>สถานะ</th><th>รูปแบบ</th><th>เวลา</th><th>ค่าจ้าง</th><th>เหตุผล</th></tr></thead><tbody>${rows.map(r=>`<tr><td data-label="วันที่">${thaiDate(r.date)}</td><td data-label="สถานะ">${escapeHtml(r.status)}</td><td data-label="รูปแบบ">${r.workType==="hourly"?"รายชั่วโมง":(r.workType==="full"?"ทั้งวัน":"-")}</td><td data-label="เวลา">${r.workType==="hourly"?`${escapeHtml(r.startTime)}-${escapeHtml(r.endTime)}`:"-"}</td><td data-label="ค่าจ้าง" class="money">${user.role === "daily" ? money(calcDailyAttendancePay(r)) : "-"}</td><td data-label="เหตุผล">${escapeHtml(r.reason||"")}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีข้อมูล</div>`}
+    <div class="panel"><h3>${isDailyUser ? "ตารางเช็คชื่อรายวัน" : "ตารางเช็คชื่อพนักงานทั่วไป"}</h3>
+      ${tableHtml}
     </div>`;
 }
+
 async function renderAdvances(){
   if(!canAccessAdvances()) return content().innerHTML = `<div class="state error">ไม่มีสิทธิ์เข้าหน้านี้</div>`;
   const monthKey = currentMonthKey();
-  const payUsers = appState.users.filter(u=>u.active!==false && ["supervisor","staff","daily"].includes(u.role));
+  const adminMode = isOwnerOrManager();
+  const payUsers = adminMode
+    ? appState.users.filter(u=>u.active!==false && ["supervisor","staff","daily"].includes(u.role))
+    : [appState.currentUser];
   content().innerHTML = `
-    ${pageTitle("เงินเบิกล่วงหน้า", "บันทึกเงินเดือนที่เบิกล่วงหน้าเพื่อนำไปคำนวณค่าตอบแทน")}
+    ${pageTitle("เงินเบิกล่วงหน้า", adminMode ? "เจ้าของ/ผู้จัดการลงแทนและดูรายการของทุกคนได้" : "บันทึกและดูรายการเบิกล่วงหน้าเฉพาะของตัวเอง")}
     <form id="advanceForm" class="panel">
       <h3>เพิ่มรายการเบิกล่วงหน้า</h3>
       <div class="grid three">
         <div class="field"><label>วันที่</label><input id="advanceDate" type="date" value="${todayISO()}"></div>
-        <div class="field"><label>ชื่อพนักงาน</label><select id="advanceUser">${payUsers.map(u=>`<option value="${u.id}">${escapeHtml(u.name)} - ${ROLE_LABELS[u.role]}</option>`).join("")}</select></div>
+        <div class="field"><label>ชื่อพนักงาน</label><select id="advanceUser" ${adminMode?"":"disabled"}>${payUsers.map(u=>`<option value="${u.id}" ${u.id===appState.currentUser.id?"selected":""}>${escapeHtml(u.name)} - ${ROLE_LABELS[u.role]}</option>`).join("")}</select><small>${adminMode?"เลือกลงแทนพนักงานได้":"ระบบล็อกให้ลงเฉพาะชื่อของตัวเอง"}</small></div>
         <div class="field"><label>จำนวนเงิน</label><input id="advanceAmount" inputmode="decimal" placeholder="0"></div>
         <div class="field"><label>รายละเอียด</label><input id="advanceDetail" placeholder="เช่น เบิกเงินเดือน"></div>
         <div class="field"><label>หมายเหตุ</label><input id="advanceNote"></div>
@@ -1300,11 +1321,16 @@ async function renderAdvances(){
   $("#advanceMonth").onchange = loadAdvances;
   await loadAdvances();
 }
+
 async function saveAdvance(e){
   e.preventDefault();
   if(!requireOnline()) return;
-  const userId=$("#advanceUser").value, date=$("#advanceDate").value;
+  const adminMode = isOwnerOrManager();
+  const userId = adminMode ? $("#advanceUser").value : appState.currentUser.id;
+  const date=$("#advanceDate").value;
+  if(!adminMode && userId !== appState.currentUser.id) return showToast("บันทึกเงินเบิกได้เฉพาะของตัวเอง");
   const data = {userId, userName:userName(userId), date, monthKey:monthOf(date), amount:numberValue($("#advanceAmount").value), detail:$("#advanceDetail").value.trim(), note:$("#advanceNote").value.trim(), createdAt:serverTimestamp(), createdBy:appState.currentUser.id, createdByName:appState.currentUser.name};
+  if(!date) return showToast("กรุณาเลือกวันที่");
   if(!data.amount) return showToast("กรุณากรอกจำนวนเงิน");
   await addDoc(collection(appState.db, "salaryAdvances"), data);
   await audit("เพิ่มเงินเบิกล่วงหน้า", {user:data.userName, amount:data.amount}, null, data);
@@ -1313,17 +1339,21 @@ async function saveAdvance(e){
   $("#advanceAmount").value = ""; $("#advanceDetail").value = ""; $("#advanceNote").value = "";
   await loadAdvances();
 }
+
 async function loadAdvances(){
   const monthKey=$("#advanceMonth").value;
+  const adminMode = isOwnerOrManager();
   const snap = await getDocs(query(collection(appState.db, "salaryAdvances"), where("monthKey","==",monthKey)));
-  const rows = snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  let rows = snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  if(!adminMode) rows = rows.filter(r=>r.userId === appState.currentUser.id);
   const totals = {};
   rows.forEach(r=>totals[r.userId]=(totals[r.userId]||0)+numberValue(r.amount));
   $("#advanceResult").innerHTML = `
     <div class="panel"><h3>ยอดเบิกรวมรายเดือน</h3>
       ${Object.keys(totals).length ? `<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th class="money">ยอดเบิกรวม</th></tr></thead><tbody>${Object.entries(totals).map(([id,total])=>`<tr><td>${escapeHtml(userName(id))}</td><td class="money">${money(total)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีข้อมูล</div>`}
     </div>
-    <div class="panel"><h3>รายการทั้งหมด</h3>
+    <div class="panel"><h3>${adminMode ? "รายการทั้งหมด" : "รายการของฉัน"}</h3>
+      <div class="state ${adminMode?"ok":"warn"}">${adminMode ? "เจ้าของและผู้จัดการเห็นรายการเบิกเงินของทุกคน" : "หน้านี้แสดงเฉพาะรายการเบิกเงินของคุณเท่านั้น"}</div>
       ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>วันที่</th><th>ชื่อ</th><th class="money">จำนวน</th><th>รายละเอียด</th><th>หมายเหตุ</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${thaiDate(r.date)}</td><td>${escapeHtml(r.userName||userName(r.userId))}</td><td class="money">${money(r.amount)}</td><td>${escapeHtml(r.detail)}</td><td>${escapeHtml(r.note)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีรายการ</div>`}
     </div>`;
 }
@@ -1346,7 +1376,7 @@ async function renderCompensation(){
         <div class="field"><label>รายชั่วโมง (บาท/ครึ่งชั่วโมง)</label><input id="dailyHalfHourPay" inputmode="decimal" value="${numberValue((appState.settings.dailyWorkerPay||{}).halfHourAmount || 20)}"></div>
         <div class="field"><label>&nbsp;</label><button id="saveDailyPaySettings" class="btn write-action">บันทึกค่าจ้างรายวัน</button></div>
       </div>
-      <small>ถ้าพนักงานรายวันเลือกทำรายชั่วโมง ระบบจะคิดทีละครึ่งชั่วโมง แต่ไม่เกินค่าจ้างเต็มวัน</small>
+      <small>ใช้สำหรับคำนวณค่าตอบแทนรายวันในตารางแยกด้านล่าง</small>
     </div>
     <div id="compResult"></div>
     <div class="panel">
@@ -1366,6 +1396,8 @@ async function loadCompensation(){
   const monthKey=$("#compMonth").value;
   $("#compResult").innerHTML = `<div class="loading">กำลังคำนวณค่าตอบแทน...</div>`;
   const payUsers = appState.users.filter(u=>u.active!==false && ["supervisor","staff","daily"].includes(u.role));
+  const regularPayUsers = payUsers.filter(u=>u.role !== "daily");
+  const dailyPayUsers = payUsers.filter(u=>u.role === "daily");
   const {rows, totals, bySelectedBonusBranch} = await computePersonalSales(monthKey, "ALL");
   const dailyBonus = {};
   rows.filter(r=>!r.closed).forEach(r=>{
@@ -1394,7 +1426,13 @@ async function loadCompensation(){
   const dailyWages = {};
   attSnap.docs.map(d=>d.data()).forEach(r=>{
     const u = appState.users.find(x=>x.id===r.userId);
-    if(u?.role === "daily") dailyWages[r.userId] = (dailyWages[r.userId] || 0) + calcDailyAttendancePay(r);
+    if(u?.role === "daily"){
+      if(!dailyWages[r.userId]) dailyWages[r.userId] = {full:0, hourly:0, total:0};
+      const pay = calcDailyAttendancePay(r);
+      if((r.workType || "full") === "hourly") dailyWages[r.userId].hourly += pay;
+      else dailyWages[r.userId].full += pay;
+      dailyWages[r.userId].total += pay;
+    }
   });
   const advSnap = await getDocs(query(collection(appState.db, "salaryAdvances"), where("monthKey","==",monthKey)));
   const advances = {};
@@ -1402,83 +1440,134 @@ async function loadCompensation(){
   const compSnap = await getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",monthKey)));
   const records = {};
   compSnap.docs.forEach(d=>records[d.data().userId]=({id:d.id, ...d.data()}));
+
+  const regularTable = regularPayUsers.length ? `<div class="table-wrap"><table>
+    <thead><tr>
+      <th>ชื่อ</th><th>ระดับ</th><th class="money">เงินเดือน</th><th class="money">OT เพิ่มอื่น ๆ</th><th>OT จากอะไร</th><th class="money">OT ทำขนม</th>
+      <th class="money">เงินเพิ่มออกบูธ</th><th class="money">โบนัสรายวัน</th><th class="money">โบนัสรายเดือน</th>
+      <th class="money">หักเงิน</th><th>รายละเอียดหัก</th><th class="money">เบิกล่วงหน้า</th><th class="money">ปกส.ลูกจ้าง</th>
+      <th class="money">ยอดโอนปลายเดือน</th><th class="money">ต้นทุนรวม+ปกส.</th><th>บันทึก</th>
+    </tr></thead>
+    <tbody>${regularPayUsers.map(u=>{
+      const r = records[u.id] || {};
+      const salary = numberValue(r.salary);
+      const employeeSS = salary * 0.05, employerSS = salary * 0.05;
+      const otOther = numberValue(r.otOther);
+      const boothBonus = numberValue(r.boothBonus);
+      const daily = numberValue(dailyBonus[u.id]);
+      const monthly = numberValue(monthlyBonus[u.id]);
+      const dessert = numberValue(dessertOT[u.id]);
+      const deduction = numberValue(r.deduction);
+      const advance = numberValue(advances[u.id]);
+      const transfer = salary + otOther + dessert + boothBonus + daily + monthly - deduction - advance - employeeSS;
+      const totalCost = salary + otOther + dessert + boothBonus + daily + monthly - deduction + employerSS;
+      return `<tr class="comp-row" data-user="${u.id}" data-daily-role="0" data-daily-wage="0" data-daily-full-wage="0" data-daily-hourly-wage="0">
+        <td>${escapeHtml(u.name)}</td><td>${roleBadge(u.role)}</td>
+        <td><input class="comp-salary wide-money" inputmode="decimal" value="${salary || ""}"></td>
+        <td><input class="comp-ot wide-money" inputmode="decimal" value="${otOther || ""}"></td>
+        <td><input class="comp-ot-note" value="${escapeHtml(r.otOtherNote || "")}" placeholder="OT จากอะไร"></td>
+        <td class="money comp-dessert" data-value="${dessert}">${money(dessert)}</td>
+        <td><input class="comp-booth" inputmode="decimal" value="${boothBonus || ""}"></td>
+        <td class="money comp-daily" data-value="${daily}">${money(daily)}</td>
+        <td class="money comp-monthly" data-value="${monthly}">${money(monthly)}</td>
+        <td><input class="comp-deduction wide-money" inputmode="decimal" value="${deduction || ""}"></td>
+        <td><input class="comp-deduction-note" value="${escapeHtml(r.deductionNote || "")}"></td>
+        <td class="money comp-advance" data-value="${advance}">${money(advance)}</td>
+        <td class="money comp-employee-ss">${money(employeeSS)}</td>
+        <td class="money comp-transfer"><b>${money(transfer)}</b></td>
+        <td class="money comp-cost"><b>${money(totalCost)}</b></td>
+        <td><div class="row-actions"><button class="btn small write-action save-comp">บันทึก</button><button type="button" class="btn secondary small share-comp">รายละเอียด/PDF</button></div></td>
+      </tr>`;
+    }).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีหัวหน้างาน/พนักงาน</div>`;
+
+  const dailyTable = dailyPayUsers.length ? `<div class="table-wrap"><table>
+    <thead><tr>
+      <th>ชื่อ</th><th>ระดับ</th>
+      <th class="money">ค่าจ้างวันที่ทำงานทั้งวัน</th><th>ไม่นำทั้งวันมาคำนวณ</th>
+      <th class="money">ค่าจ้างวันที่ทำงานรายชั่วโมง</th><th>ไม่นำรายชั่วโมงมาคำนวณ</th>
+      <th class="money">ค่าจ้างที่นำมาคิด</th><th class="money">OT เพิ่มอื่น ๆ</th><th>OT จากอะไร</th><th class="money">OT ทำขนม</th><th class="money">เงินเพิ่มออกบูธ</th>
+      <th class="money">หักเงิน</th><th>รายละเอียดหัก</th><th class="money">เบิกล่วงหน้า</th><th class="money">ยอดโอนปลายเดือน</th><th class="money">ต้นทุนรวม</th><th>บันทึก</th>
+    </tr></thead>
+    <tbody>${dailyPayUsers.map(u=>{
+      const r = records[u.id] || {};
+      const wage = dailyWages[u.id] || {full:0, hourly:0, total:0};
+      const fullPaid = !!(r.dailyFullPaidAlready ?? r.dailyPaidAlready);
+      const hourlyPaid = !!(r.dailyHourlyPaidAlready ?? r.dailyPaidAlready);
+      const salary = (fullPaid ? 0 : numberValue(wage.full)) + (hourlyPaid ? 0 : numberValue(wage.hourly));
+      const otOther = numberValue(r.otOther);
+      const boothBonus = numberValue(r.boothBonus);
+      const dessert = numberValue(dessertOT[u.id]);
+      const deduction = numberValue(r.deduction);
+      const advance = numberValue(advances[u.id]);
+      const transfer = salary + otOther + dessert + boothBonus - deduction - advance;
+      const totalCost = salary + otOther + dessert + boothBonus - deduction;
+      return `<tr class="comp-row" data-user="${u.id}" data-daily-role="1" data-daily-wage="${numberValue(wage.total)}" data-daily-full-wage="${numberValue(wage.full)}" data-daily-hourly-wage="${numberValue(wage.hourly)}">
+        <td>${escapeHtml(u.name)}</td><td>${roleBadge(u.role)}</td>
+        <td class="money comp-daily-full-raw" data-value="${numberValue(wage.full)}">${money(wage.full)}</td>
+        <td><label class="inline-check"><input class="comp-daily-full-paid" type="checkbox" ${fullPaid?"checked":""}> ไม่นำมาคำนวณเพราะได้รับแล้ว</label></td>
+        <td class="money comp-daily-hourly-raw" data-value="${numberValue(wage.hourly)}">${money(wage.hourly)}</td>
+        <td><label class="inline-check"><input class="comp-daily-hourly-paid" type="checkbox" ${hourlyPaid?"checked":""}> ไม่นำมาคำนวณเพราะได้รับแล้ว</label></td>
+        <td><input class="comp-salary wide-money" inputmode="decimal" value="${salary || ""}" disabled></td>
+        <td><input class="comp-ot wide-money" inputmode="decimal" value="${otOther || ""}"></td>
+        <td><input class="comp-ot-note" value="${escapeHtml(r.otOtherNote || "")}" placeholder="OT จากอะไร"></td>
+        <td class="money comp-dessert" data-value="${dessert}">${money(dessert)}</td>
+        <td><input class="comp-booth" inputmode="decimal" value="${boothBonus || ""}"></td>
+        <td><input class="comp-deduction wide-money" inputmode="decimal" value="${deduction || ""}"></td>
+        <td><input class="comp-deduction-note" value="${escapeHtml(r.deductionNote || "")}"></td>
+        <td class="money comp-advance" data-value="${advance}">${money(advance)}</td>
+        <td class="money comp-transfer"><b>${money(transfer)}</b></td>
+        <td class="money comp-cost"><b>${money(totalCost)}</b></td>
+        <td><div class="row-actions"><button class="btn small write-action save-comp">บันทึก</button><button type="button" class="btn secondary small share-comp">รายละเอียด/PDF</button></div></td>
+      </tr>`;
+    }).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีพนักงานรายวัน</div>`;
+
   $("#compResult").innerHTML = `
     <div class="panel">
-      <h3>ตารางค่าตอบแทน ${thaiMonth(monthKey)}</h3>
-      <div class="state ok">หัวหน้างาน/พนักงานคิดเงินเดือน โบนัส OT เบิกล่วงหน้า และประกันสังคม ส่วนรายวันจะแสดง “ค่าจ้างรายวัน” แยก ไม่มีโบนัสรายวัน/รายเดือน และไม่มีประกันสังคม</div>
-      <div class="table-wrap"><table>
-        <thead><tr>
-          <th>ชื่อ</th><th>ระดับ</th><th class="money">เงินเดือน/ค่าจ้างรายวัน</th><th>รายวันรับจากสาขาแล้ว</th><th class="money">OT เพิ่มอื่น ๆ</th><th>OT จากอะไร</th><th class="money">OT ทำขนม</th>
-          <th class="money">เงินเพิ่มออกบูธ</th><th class="money">โบนัสรายวัน</th><th class="money">โบนัสรายเดือน</th>
-          <th class="money">หักเงิน</th><th>รายละเอียดหัก</th><th class="money">เบิกล่วงหน้า</th><th class="money">ปกส.ลูกจ้าง</th>
-          <th class="money">ยอดโอนปลายเดือน</th><th class="money">ต้นทุนรวม+ปกส.</th><th>บันทึก</th>
-        </tr></thead>
-        <tbody>${payUsers.map(u=>{
-          const r = records[u.id] || {};
-          const isDaily = u.role === "daily";
-          const dailyWageRaw = numberValue(dailyWages[u.id]);
-          const paidAlready = isDaily ? !!r.dailyPaidAlready : false;
-          const salary = isDaily ? (paidAlready ? 0 : dailyWageRaw) : numberValue(r.salary);
-          const employeeSS = isDaily ? 0 : salary * 0.05, employerSS = isDaily ? 0 : salary * 0.05;
-          const otOther = numberValue(r.otOther);
-          const boothBonus = numberValue(r.boothBonus);
-          const daily = isDaily ? 0 : numberValue(dailyBonus[u.id]);
-          const monthly = isDaily ? 0 : numberValue(monthlyBonus[u.id]);
-          const dessert = numberValue(dessertOT[u.id]);
-          const deduction = numberValue(r.deduction);
-          const advance = numberValue(advances[u.id]);
-          const transfer = salary + otOther + dessert + boothBonus + daily + monthly - deduction - advance - employeeSS;
-          const totalCost = salary + otOther + dessert + boothBonus + daily + monthly - deduction + employerSS;
-          return `<tr class="comp-row" data-user="${u.id}" data-daily-role="${isDaily?"1":"0"}" data-daily-wage="${dailyWageRaw}">
-            <td>${escapeHtml(u.name)}</td><td>${roleBadge(u.role)}</td>
-            <td><input class="comp-salary wide-money" inputmode="decimal" value="${salary || ""}" ${isDaily?"disabled":""}></td>
-            <td>${isDaily?`<label class="inline-check"><input class="comp-daily-paid" type="checkbox" ${paidAlready?"checked":""}> ไม่นำค่าจ้างมาคำนวณ</label><small>ยอดก่อนติ๊ก ${money(dailyWageRaw)} บาท</small>`:"-"}</td>
-            <td><input class="comp-ot wide-money" inputmode="decimal" value="${otOther || ""}"></td>
-            <td><input class="comp-ot-note" value="${escapeHtml(r.otOtherNote || "")}" placeholder="OT จากอะไร"></td>
-            <td class="money comp-dessert" data-value="${dessert}">${money(dessert)}</td>
-            <td><input class="comp-booth" inputmode="decimal" value="${boothBonus || ""}"></td>
-            <td class="money comp-daily" data-value="${daily}">${money(daily)}</td>
-            <td class="money comp-monthly" data-value="${monthly}">${money(monthly)}</td>
-            <td><input class="comp-deduction wide-money" inputmode="decimal" value="${deduction || ""}"></td>
-            <td><input class="comp-deduction-note" value="${escapeHtml(r.deductionNote || "")}"></td>
-            <td class="money comp-advance" data-value="${advance}">${money(advance)}</td>
-            <td class="money comp-employee-ss">${money(employeeSS)}</td>
-            <td class="money comp-transfer"><b>${money(transfer)}</b></td>
-            <td class="money comp-cost"><b>${money(totalCost)}</b></td>
-            <td><div class="row-actions"><button class="btn small write-action save-comp">บันทึก</button><button type="button" class="btn secondary small share-comp">รายละเอียด/PDF</button></div></td>
-          </tr>`;
-        }).join("")}</tbody>
-      </table></div>
+      <h3>ตารางค่าตอบแทนหัวหน้างาน/พนักงาน ${thaiMonth(monthKey)}</h3>
+      <div class="state ok">ตารางนี้ตัดช่องค่าจ้างรายวันออกแล้ว เพื่อให้สั้นและอ่านง่ายขึ้น</div>
+      ${regularTable}
+    </div>
+    <div class="panel">
+      <h3>ตารางค่าตอบแทนรายวัน ${thaiMonth(monthKey)}</h3>
+      <div class="state ok">แยกค่าจ้างวันที่ทำงานทั้งวันและรายชั่วโมง พร้อมช่องติ๊กไม่นำมาคำนวณเมื่อได้รับเงินแล้ว</div>
+      ${dailyTable}
     </div>`;
   $$(".comp-row").forEach(row=>{
     row.oninput = ()=>recalcCompRow(row);
-    $(".comp-daily-paid", row)?.addEventListener("change", ()=>recalcCompRow(row));
+    $(".comp-daily-full-paid", row)?.addEventListener("change", ()=>recalcCompRow(row));
+    $(".comp-daily-hourly-paid", row)?.addEventListener("change", ()=>recalcCompRow(row));
     $(".save-comp", row).onclick = ()=>saveCompRow(row, monthKey);
     $(".share-comp", row).onclick = ()=>shareCompSummary(row, monthKey);
     recalcCompRow(row);
   });
   updateOnlineUi();
 }
+
 function recalcCompRow(row){
   const isDaily = row.dataset.dailyRole === "1";
-  const dailyRaw = numberValue(row.dataset.dailyWage);
-  const paidAlready = !!$(".comp-daily-paid", row)?.checked;
-  if(isDaily) $(".comp-salary", row).value = paidAlready ? "0" : money(dailyRaw);
+  const dailyFullRaw = numberValue(row.dataset.dailyFullWage);
+  const dailyHourlyRaw = numberValue(row.dataset.dailyHourlyWage);
+  if(isDaily){
+    const fullPaid = !!$(".comp-daily-full-paid", row)?.checked;
+    const hourlyPaid = !!$(".comp-daily-hourly-paid", row)?.checked;
+    $(".comp-salary", row).value = money((fullPaid ? 0 : dailyFullRaw) + (hourlyPaid ? 0 : dailyHourlyRaw));
+  }
   const salary = numberValue($(".comp-salary", row).value);
   const ot = numberValue($(".comp-ot", row).value);
   const dessert = numberValue($(".comp-dessert", row).dataset.value);
   const booth = numberValue($(".comp-booth", row).value);
-  const daily = isDaily ? 0 : numberValue($(".comp-daily", row).dataset.value);
-  const monthly = isDaily ? 0 : numberValue($(".comp-monthly", row).dataset.value);
+  const daily = isDaily ? 0 : numberValue($(".comp-daily", row)?.dataset.value);
+  const monthly = isDaily ? 0 : numberValue($(".comp-monthly", row)?.dataset.value);
   const deduction = numberValue($(".comp-deduction", row).value);
   const advance = numberValue($(".comp-advance", row).dataset.value);
   const empSS = isDaily ? 0 : salary * .05, employerSS = isDaily ? 0 : salary * .05;
   const transfer = salary + ot + dessert + booth + daily + monthly - deduction - advance - empSS;
   const cost = salary + ot + dessert + booth + daily + monthly - deduction + employerSS;
-  $(".comp-employee-ss", row).textContent = money(empSS);
+  if($(".comp-employee-ss", row)) $(".comp-employee-ss", row).textContent = money(empSS);
   $(".comp-transfer", row).innerHTML = `<b>${money(transfer)}</b>`;
   $(".comp-cost", row).innerHTML = `<b>${money(cost)}</b>`;
 }
+
 function getCompRowData(row, monthKey){
   recalcCompRow(row);
   const userId = row.dataset.user;
@@ -1488,29 +1577,41 @@ function getCompRowData(row, monthKey){
   const otOther = numberValue($(".comp-ot", row).value);
   const dessertOT = numberValue($(".comp-dessert", row).dataset.value);
   const boothBonus = numberValue($(".comp-booth", row).value);
-  const dailyBonus = isDaily ? 0 : numberValue($(".comp-daily", row).dataset.value);
-  const monthlyBonus = isDaily ? 0 : numberValue($(".comp-monthly", row).dataset.value);
+  const dailyBonus = isDaily ? 0 : numberValue($(".comp-daily", row)?.dataset.value);
+  const monthlyBonus = isDaily ? 0 : numberValue($(".comp-monthly", row)?.dataset.value);
   const deduction = numberValue($(".comp-deduction", row).value);
   const advances = numberValue($(".comp-advance", row).dataset.value);
   const employeeSS = isDaily ? 0 : salary * .05;
   const employerSS = isDaily ? 0 : salary * .05;
   const netTransfer = salary + otOther + dessertOT + boothBonus + dailyBonus + monthlyBonus - deduction - advances - employeeSS;
   const totalIncome = salary + otOther + dessertOT + boothBonus + dailyBonus + monthlyBonus;
+  const dailyFullWageBeforeExclude = numberValue(row.dataset.dailyFullWage);
+  const dailyHourlyWageBeforeExclude = numberValue(row.dataset.dailyHourlyWage);
+  const dailyFullPaidAlready = !!$(".comp-daily-full-paid", row)?.checked;
+  const dailyHourlyPaidAlready = !!$(".comp-daily-hourly-paid", row)?.checked;
   return {
     monthKey, userId, userName:userName(userId), role, isDaily,
-    salary, dailyWageBeforeExclude:numberValue(row.dataset.dailyWage), dailyPaidAlready:!!$(".comp-daily-paid", row)?.checked,
+    salary, dailyWageBeforeExclude:numberValue(row.dataset.dailyWage),
+    dailyFullWageBeforeExclude, dailyHourlyWageBeforeExclude, dailyFullPaidAlready, dailyHourlyPaidAlready,
+    dailyPaidAlready:isDaily && dailyFullPaidAlready && dailyHourlyPaidAlready,
     otOther, otOtherNote:$(".comp-ot-note", row)?.value.trim() || "", dessertOT,
     boothBonus, dailyBonus, monthlyBonus, deduction, deductionNote:$(".comp-deduction-note", row)?.value.trim() || "",
     advances, employeeSS, employerSS, totalIncome, netTransfer, totalCost:salary + otOther + dessertOT + boothBonus + dailyBonus + monthlyBonus - deduction + employerSS,
     createdBy:appState.currentUser?.name || "-", createdAt:new Date()
   };
 }
+
 function buildCompSummaryFromData(d){
+  const wageLines = d.isDaily ? [
+    `ค่าจ้างวันที่ทำงานทั้งวัน: ${money(d.dailyFullPaidAlready ? 0 : d.dailyFullWageBeforeExclude)} บาท${d.dailyFullPaidAlready ? ` (ได้รับแล้ว ไม่นำยอดเดิม ${money(d.dailyFullWageBeforeExclude)} บาทมาคำนวณ)` : ""}`,
+    `ค่าจ้างวันที่ทำงานรายชั่วโมง: ${money(d.dailyHourlyPaidAlready ? 0 : d.dailyHourlyWageBeforeExclude)} บาท${d.dailyHourlyPaidAlready ? ` (ได้รับแล้ว ไม่นำยอดเดิม ${money(d.dailyHourlyWageBeforeExclude)} บาทมาคำนวณ)` : ""}`,
+    `ค่าจ้างรายวันที่นำมาคำนวณ: ${money(d.salary)} บาท`
+  ] : [`เงินเดือน: ${money(d.salary)} บาท`];
   const lines = [
     `สรุปค่าตอบแทน Love Matcha`,
     `เดือน: ${thaiMonth(d.monthKey)}`,
     `ชื่อ: ${d.userName}`,
-    `${d.isDaily?"ค่าจ้างรายวัน":"เงินเดือน"}: ${money(d.salary)} บาท${d.isDaily && d.dailyPaidAlready ? ` (รับจากสาขาแล้ว ยอดเดิม ${money(d.dailyWageBeforeExclude)} บาท)` : ""}`,
+    ...wageLines,
     `OT เพิ่มอื่น ๆ: ${money(d.otOther)} บาท${d.otOtherNote ? ` (${d.otOtherNote})` : ""}`,
     `OT ทำขนม: ${money(d.dessertOT)} บาท`,
     `เงินเพิ่มออกบูธ: ${money(d.boothBonus)} บาท`,
@@ -1523,15 +1624,20 @@ function buildCompSummaryFromData(d){
   ];
   return lines.join("\n");
 }
+
 function buildCompPdfHtml(d){
   const role = ROLE_LABELS[d.role] || d.role || "-";
   const madeAt = `${thaiDate(d.createdAt.toISOString().slice(0,10))} ${String(d.createdAt.getHours()).padStart(2,"0")}:${String(d.createdAt.getMinutes()).padStart(2,"0")}`;
   const item = (name, amount, note="") => `<tr><td>${escapeHtml(name)}${note?`<div class="pdf-note">${escapeHtml(note)}</div>`:""}</td><td class="pdf-money">${money(amount)}</td></tr>`;
+  const dailyWageRows = d.isDaily ? `
+      ${item("ค่าจ้างวันที่ทำงานทั้งวัน", d.dailyFullPaidAlready ? 0 : d.dailyFullWageBeforeExclude, d.dailyFullPaidAlready ? `ได้รับแล้ว จึงไม่นำยอดเดิม ${money(d.dailyFullWageBeforeExclude)} บาทมาคำนวณ` : "")}
+      ${item("ค่าจ้างวันที่ทำงานรายชั่วโมง", d.dailyHourlyPaidAlready ? 0 : d.dailyHourlyWageBeforeExclude, d.dailyHourlyPaidAlready ? `ได้รับแล้ว จึงไม่นำยอดเดิม ${money(d.dailyHourlyWageBeforeExclude)} บาทมาคำนวณ` : "")}
+      ${item("ค่าจ้างรายวันที่นำมาคำนวณ", d.salary)}` : item("เงินเดือน", d.salary);
   return `<div class="pdf-document">
     <div class="pdf-header"><img src="${escapeHtml(appState.settings.logoUrl || "./icons/logo.png")}" alt="logo"><div><h1>สรุปค่าตอบแทน</h1><p>${escapeHtml(appState.settings.storeName || "Love Matcha")} · ${thaiMonth(d.monthKey)}</p></div></div>
     <div class="pdf-info-grid"><div><small>ชื่อพนักงาน</small><b>${escapeHtml(d.userName)}</b></div><div><small>ตำแหน่ง</small><b>${escapeHtml(role)}</b></div><div><small>จัดทำโดย</small><b>${escapeHtml(d.createdBy)}</b></div><div><small>วันที่จัดทำ</small><b>${madeAt}</b></div></div>
     <table class="pdf-table"><thead><tr><th>รายการ</th><th>จำนวนเงิน (บาท)</th></tr></thead><tbody>
-      ${item(d.isDaily?"ค่าจ้างรายวัน":"เงินเดือน", d.salary, d.isDaily && d.dailyPaidAlready ? `รับจากสาขาแล้ว จึงไม่นำยอดเดิม ${money(d.dailyWageBeforeExclude)} บาทมาคำนวณ` : "")}
+      ${dailyWageRows}
       ${item("OT เพิ่มอื่น ๆ", d.otOther, d.otOtherNote)}${item("OT ทำขนม", d.dessertOT)}${item("เงินเพิ่มออกบูธ", d.boothBonus)}
       ${!d.isDaily ? `${item("โบนัสรายวัน", d.dailyBonus)}${item("โบนัสรายเดือน", d.monthlyBonus)}` : ""}
       <tr class="pdf-subtotal"><td>รวมรายรับก่อนหัก</td><td class="pdf-money">${money(d.totalIncome)}</td></tr>
@@ -1539,9 +1645,10 @@ function buildCompPdfHtml(d){
       ${!d.isDaily ? item("ประกันสังคมฝ่ายลูกจ้าง", -Math.abs(d.employeeSS)) : ""}
       <tr class="pdf-total"><td>ยอดที่ต้องโอนปลายเดือน</td><td class="pdf-money">${money(d.netTransfer)}</td></tr>
     </tbody></table>
-    <div class="pdf-note-box"><b>หมายเหตุ</b><br>รายวันไม่มีโบนัสรายวัน/รายเดือนและไม่มีประกันสังคม หากติ๊กรับเงินจากสาขาแล้ว ระบบจะไม่นำค่าจ้างรายวันมาคำนวณซ้ำ</div>
+    <div class="pdf-note-box"><b>หมายเหตุ</b><br>${d.isDaily ? "รายวันแยกค่าจ้างทั้งวันและรายชั่วโมง หากติ๊กว่าได้รับแล้ว ระบบจะไม่นำยอดส่วนนั้นมาคำนวณซ้ำ" : "ยอดเงินนี้เป็นสรุปสำหรับตรวจสอบก่อนโอนปลายเดือน"}</div>
   </div>`;
 }
+
 function closeCompPdfModal(){ const modal = $("#compPdfModal"); if(modal) modal.remove(); }
 function openCompPdfDetail(row, monthKey){
   const d = getCompRowData(row, monthKey);
@@ -1576,7 +1683,9 @@ async function saveCompRow(row, monthKey){
   const d = getCompRowData(row, monthKey);
   const data = {
     userId:d.userId, userName:d.userName, role:d.role, monthKey:d.monthKey, isDaily:d.isDaily,
-    salary:d.salary, dailyWageBeforeExclude:d.dailyWageBeforeExclude, dailyPaidAlready:d.dailyPaidAlready,
+    salary:d.salary, dailyWageBeforeExclude:d.dailyWageBeforeExclude,
+    dailyFullWageBeforeExclude:d.dailyFullWageBeforeExclude, dailyHourlyWageBeforeExclude:d.dailyHourlyWageBeforeExclude,
+    dailyFullPaidAlready:d.dailyFullPaidAlready, dailyHourlyPaidAlready:d.dailyHourlyPaidAlready, dailyPaidAlready:d.dailyPaidAlready,
     otOther:d.otOther, otOtherNote:d.otOtherNote, dessertOT:d.dessertOT, boothBonus:d.boothBonus,
     dailyBonus:d.dailyBonus, monthlyBonus:d.monthlyBonus, dailyBonusOverride:null, monthlyBonusOverride:null,
     deduction:d.deduction, deductionNote:d.deductionNote, advances:d.advances,
@@ -1591,6 +1700,7 @@ async function saveCompRow(row, monthKey){
   await afterWrite("compensation");
   showToast(`บันทึกค่าตอบแทนของ ${d.userName} แล้ว`);
 }
+
 async function saveDailyPaySettings(){
   if(!requireOnline()) return;
   const dailyWorkerPay = {fullDayAmount:numberValue($("#dailyFullPay").value), halfHourAmount:numberValue($("#dailyHalfHourPay").value)};

@@ -194,3 +194,13 @@ body.is-offline #pageContent textarea{
   .sticky-save.grid.two{grid-template-columns:1fr}
   .comp-row input.wide-money{min-width:96px}
 }
+
+
+/* v1.3: แถวหยุดร้านแบบสั้น และตารางค่าตอบแทนแยกรายวัน */
+.closed-short-row .closed-short-cell{background:#fff8df;color:#795200;font-weight:700}
+.comp-row[data-daily-role="1"] .comp-salary{background:#f7f8f5;font-weight:900}
+@media(max-width:680px){
+  .sales-table tr.closed-short-row{display:block;background:#fff8df;border-color:#efd894}
+  .sales-table tr.closed-short-row td[colspan]{display:block;text-align:left}
+  .sales-table tr.closed-short-row td[colspan]::before{content:"สรุป"}
+}
