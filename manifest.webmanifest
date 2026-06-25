@@ -1,7 +1,7 @@
 {
   "name": "Love Matcha Sales",
   "short_name": "Love Matcha",
-  "description": "ระบบบันทึกยอดขาย เช็คชื่อ ค่าตอบแทน สำรอง JSON/Google Sheet และ PWA สำหรับร้าน Love Matcha",
+  "description": "ระบบบันทึกยอดขาย เช็คชื่อ ค่าตอบแทน สำรอง JSON และ PWA สำหรับร้าน Love Matcha",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

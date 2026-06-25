@@ -6,7 +6,7 @@ import {
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const VERSION = "v1.3.2";
+const VERSION = "v1.3.3";
 const DEFAULT_BACKUP_URL = "https://script.google.com/macros/s/AKfycbz7pwTBSDwVwja4ugxvlJoNYb4ksBk7METKzGd3bCARUzea99Sx0BTAJHIDi5N2iW7e/exec";
 const COLLECTIONS = [
   "users","branches","dailySales","dailyDrafts","dailyExpenses","cupCounts","dessertOT",
@@ -36,7 +36,7 @@ const DEFAULT_SETTINGS = {
   logoUrl:"./icons/logo.png",
   autoBackup:{mode:"off", intervalMinutes:60, url:DEFAULT_BACKUP_URL},
   advanceAccessUserIds:[],
-  dailyWorkerPay:{fullDayAmount:360, halfHourAmount:20},
+  dailyWorkerPay:{fullDayAmount:360, hourAmount:40, halfHourAmount:20},
   dailyBonus:{
     nongkhai:{enabled:false, threshold:0, amount:0},
     booth:{enabled:false, threshold:0, amount:0},
@@ -119,6 +119,11 @@ function thaiMonth(monthKey){
   const names = ["","มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
   return `${names[m]} ${y+543}`;
 }
+function previousMonthKey(monthKey){
+  const [y,m] = String(monthKey || currentMonthKey()).split("-").map(Number);
+  const d = new Date(y, (m || 1) - 2, 1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+}
 function formatTs(v){
   if(!v) return "-";
   const d = typeof v.toDate === "function" ? v.toDate() : new Date(v);
@@ -154,7 +159,9 @@ function canAccessAdvances(user=appState.currentUser){
 }
 function dailyPaySettings(){
   const p = appState.settings.dailyWorkerPay || DEFAULT_SETTINGS.dailyWorkerPay;
-  return {fullDayAmount:numberValue(p.fullDayAmount || 360), halfHourAmount:numberValue(p.halfHourAmount || 20)};
+  const legacyHalfHour = numberValue(p.halfHourAmount || 0);
+  const hourAmount = numberValue(p.hourAmount || (legacyHalfHour ? legacyHalfHour * 2 : 40));
+  return {fullDayAmount:numberValue(p.fullDayAmount || 360), hourAmount, halfHourAmount:hourAmount / 2};
 }
 function branchName(id){ return appState.branches.find(b=>b.id===id)?.name || id || "-"; }
 function userName(id){ return appState.users.find(u=>u.id===id)?.name || id || "-"; }
@@ -308,7 +315,9 @@ function normalizeSettings(){
   })).filter(x=>x.name);
   if(!s.dessertItems.length) s.dessertItems = clone(DEFAULT_SETTINGS.dessertItems);
   s.advanceAccessUserIds = Array.isArray(s.advanceAccessUserIds) ? s.advanceAccessUserIds : [];
-  s.dailyWorkerPay = {fullDayAmount:numberValue(s.dailyWorkerPay?.fullDayAmount || 360), halfHourAmount:numberValue(s.dailyWorkerPay?.halfHourAmount || 20)};
+  const legacyHalfHour = numberValue(s.dailyWorkerPay?.halfHourAmount || 20);
+  const hourAmount = numberValue(s.dailyWorkerPay?.hourAmount || (legacyHalfHour ? legacyHalfHour * 2 : 40));
+  s.dailyWorkerPay = {fullDayAmount:numberValue(s.dailyWorkerPay?.fullDayAmount || 360), hourAmount, halfHourAmount:hourAmount / 2};
   appState.settings = mergeDeep(clone(DEFAULT_SETTINGS), s);
   if(!appState.settings.autoBackup) appState.settings.autoBackup = clone(DEFAULT_SETTINGS.autoBackup);
   if(!appState.settings.autoBackup.url) appState.settings.autoBackup.url = DEFAULT_BACKUP_URL;
@@ -434,7 +443,8 @@ async function afterWrite(actionName){
   if(!appState.settings?.autoBackup) return;
   const mode = appState.settings.autoBackup.mode || "off";
   if(mode === "onAction" || mode === "both"){
-    try { await performBackup(`auto_${actionName}`, true); } catch(e){ console.warn("auto backup", e); }
+    // v1.3.3: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
+    setTimeout(()=>performBackup(`auto_${actionName}`, true).catch(e=>console.warn("auto backup", e)), 0);
   }
 }
 
@@ -581,6 +591,7 @@ function monthlySalesDetailHtml(r){
   const milkCash = numberValue(r.milkCashOut ?? r.milkCost);
   const expenseCash = numberValue(r.otherExpenseCashOut ?? r.otherExpenseTotal);
   return `<div class="monthly-detail-card">
+    <div class="monthly-detail-toolbar"><b>รายละเอียด ${thaiDate(r.date)}</b><button type="button" class="btn ghost small monthly-detail-close">ปิด/ซ่อนรายละเอียด</button></div>
     <div class="grid two">
       <div class="detail-section">
         <h4>ยอดขาย</h4>
@@ -624,6 +635,17 @@ function bindMonthlyDetailButtons(){
       btn.textContent = isHidden ? "แสดงรายละเอียด" : "ซ่อนรายละเอียด";
     };
   });
+  $$(".monthly-detail-close").forEach(btn=>{
+    btn.onclick = ()=>{
+      const row = btn.closest(".monthly-detail-row");
+      if(!row) return;
+      row.classList.add("hidden");
+      const key = row.dataset.detail;
+      const opener = $(`.monthly-detail-btn[data-detail="${key}"]`);
+      if(opener) opener.textContent = "แสดงรายละเอียด";
+      opener?.scrollIntoView({behavior:"smooth", block:"center"});
+    };
+  });
 }
 function drawBar(canvasId, labels, values, label){
   const el = document.getElementById(canvasId);
@@ -648,7 +670,7 @@ async function renderDaily(){
   content().innerHTML = `
     ${pageTitle("บันทึกยอดขายรายวัน", "เลือกวันและสาขา แล้วบันทึกข้อมูลการขาย")}
     <form id="dailyForm">
-      <div class="panel">
+      <div class="panel daily-panel daily-panel-head">
         <h3>วันที่ / สาขา</h3>
         <div class="grid three">
           <div class="field"><label>เดือน</label><input id="dailyMonth" type="month" value="${date.slice(0,7)}"></div>
@@ -659,14 +681,14 @@ async function renderDaily(){
       </div>
 
       <div id="openShopFields">
-        <div class="panel">
-          <h3>พนักงานในกะ</h3>
+        <div class="panel daily-panel daily-section staff-section">
+          <h3>👥 พนักงานในกะ</h3>
           <small>เลือกคนที่ทำงานจริง 1-4 คน</small>
           <div id="workersBox" class="check-list" style="margin-top:8px"></div>
         </div>
 
-        <div class="panel">
-          <h3>ข้อมูลยอดขาย</h3>
+        <div class="panel daily-panel daily-section sales-section">
+          <h3>🧾 ข้อมูลยอดขาย</h3>
           <div class="grid three">
             <div class="field"><label>ยอดขายก่อนส่วนลด</label><input id="grossSales" inputmode="decimal" class="calc-money" placeholder="0"></div>
             <div class="field"><label>ส่วนลด</label><input id="discount" inputmode="decimal" class="calc-money" placeholder="0"></div>
@@ -682,8 +704,8 @@ async function renderDaily(){
           <div id="salesWarn"></div>
         </div>
 
-        <div class="panel">
-          <h3>ข้อมูลเงินสด</h3>
+        <div class="panel daily-panel daily-section cash-section">
+          <h3>💵 ข้อมูลเงินสด / รายจ่าย</h3>
           <div class="grid three">
             <div class="field"><label>เงินสดเปิดกะ</label><input id="cashOpen" inputmode="decimal" class="calc-money" placeholder="0"></div>
             <div class="field"><label>เงินสดปิดกะ</label><input id="cashClose" inputmode="decimal" class="calc-money" placeholder="0"></div>
@@ -700,8 +722,8 @@ async function renderDaily(){
           <div id="cashWarn"></div>
         </div>
 
-        <div class="panel">
-          <h3>ข้อมูลแก้ว</h3>
+        <div class="panel daily-panel daily-section cup-section">
+          <h3>🥤 ข้อมูลแก้ว</h3>
           <div class="grid three">
             <div class="field"><label>แก้วคงเหลือวันก่อน</label><input id="prevCupRemain" inputmode="numeric" class="calc-money" placeholder="0"><small>ระบบพยายามดึงให้อัตโนมัติ แต่แก้ได้</small></div>
             <div class="field"><label>แก้วเพิ่มวันนี้</label><input id="cupsAdded" inputmode="numeric" class="calc-money" placeholder="0"></div>
@@ -712,8 +734,8 @@ async function renderDaily(){
           <div id="cupWarn"></div>
         </div>
 
-        <div class="panel">
-          <h3>OT ทำขนม</h3>
+        <div class="panel daily-panel daily-section ot-section">
+          <h3>🍰 OT ทำขนม</h3>
           <label class="check-item"><input id="otEnabled" type="checkbox"> เปิดช่อง OT ทำขนมวันนี้</label>
           <div id="otFields" class="hidden">
             <div class="field" style="margin-top:10px"><label>คนที่ทำ OT</label><div id="otWorkersBox" class="check-list"></div></div>
@@ -724,8 +746,8 @@ async function renderDaily(){
         </div>
       </div>
 
-      <div class="panel">
-        <h3>หมายเหตุ</h3>
+      <div class="panel daily-panel daily-section note-section">
+        <h3>📝 หมายเหตุ</h3>
         <textarea id="dailyNote" placeholder="บันทึกเพิ่มเติมของวันนั้น"></textarea>
       </div>
       <div id="existingWarn"></div>
@@ -1073,7 +1095,7 @@ async function loadMonthlyResult(){
   const branchId = $("#summaryBranch").value;
   $("#monthlyResult").innerHTML = `<div class="loading">กำลังคำนวณ...</div>`;
   const rows = await getSalesForMonth(monthKey, branchId);
-  const displayRows = rows.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)) || String(a.branchId).localeCompare(String(b.branchId)));
+  const displayRows = rows.slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)) || String(a.branchId).localeCompare(String(b.branchId)));
   const ag = aggregateSales(rows);
   $("#monthlyResult").innerHTML = `
     ${kpis([
@@ -1086,17 +1108,52 @@ async function loadMonthlyResult(){
       {label:"เปิดร้าน", value:`${ag.openDays} วัน`},
       {label:"หยุดร้าน", value:`${ag.closedDays} วัน`}
     ])}
-    <div class="panel">
+    <div class="panel monthly-branch-panel">
       <div class="flex">
-        <h3>ตารางรายวัน</h3>
+        <h3>ตารางรายวันแยกตามสาขา</h3>
         <button id="exportMonthlyCsv" class="btn secondary small">Export CSV</button>
         <button id="exportMonthlyJson" class="btn secondary small">Export JSON</button>
       </div>
-      ${salesTable(displayRows, {details:true})}
+      <div class="state ok">เรียงจากต้นเดือนไปปลายเดือน แสดงเฉพาะข้อมูลหลักก่อน กด “แสดงรายละเอียด” เพื่อเปิดรายละเอียดของวันนั้น</div>
+      ${monthlyBranchTables(displayRows, branchId)}
     </div>`;
   $("#exportMonthlyCsv").onclick = ()=>downloadText(`LoveMatcha_${monthKey}_${branchId}.csv`, dailyRowsToCsv(rows), "text/csv");
   $("#exportMonthlyJson").onclick = ()=>downloadText(`LoveMatcha_${monthKey}_${branchId}.json`, JSON.stringify(rows, null, 2), "application/json");
   bindMonthlyDetailButtons();
+}
+function monthlyBranchTables(rows, selectedBranchId="ALL"){
+  const branches = (selectedBranchId === "ALL" ? visibleBranches() : activeBranches().filter(b=>b.id===selectedBranchId && canSeeBranch(b.id)));
+  const hasAny = rows.length > 0;
+  if(!branches.length) return `<div class="empty">ไม่มีสาขาที่มีสิทธิ์ดู</div>`;
+  return branches.map(branch=>{
+    const branchRows = rows.filter(r=>r.branchId === branch.id).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    if(!branchRows.length && hasAny && selectedBranchId === "ALL") return "";
+    return `<section class="monthly-branch-block">
+      <div class="monthly-branch-head"><h3>${escapeHtml(branch.name)}</h3><span class="pill muted">${branchRows.length} รายการ</span></div>
+      ${monthlyRowsTable(branchRows, branch.id)}
+    </section>`;
+  }).join("") || `<div class="empty">ยังไม่มีข้อมูลในเดือนนี้</div>`;
+}
+function monthlyRowsTable(rows, branchId){
+  if(!rows.length) return `<div class="empty compact">ยังไม่มีข้อมูลสาขานี้</div>`;
+  return `<div class="table-wrap monthly-simple-wrap"><table class="monthly-simple-table">
+    <thead><tr><th>วันที่</th><th>ชื่อพนักงานในกะ</th><th class="money">รายได้รวมทั้งหมด</th><th class="money">รายจ่ายรวมทั้งหมด</th><th class="money">เงินสดให้เจ้าของ</th><th>รายละเอียด</th></tr></thead>
+    <tbody>${rows.map((r,i)=>{
+      const key = `${branchId}_${i}`;
+      if(r.closed){
+        return `<tr class="monthly-main-row closed-short-row"><td data-label="วันที่">${thaiDate(r.date)}</td><td data-label="สรุป" colspan="5" class="closed-short-cell"><b>หยุดร้าน</b>${r.note?` · ${escapeHtml(r.note)}`:""}</td></tr>`;
+      }
+      const totalExpense = numberValue(r.milkCost) + numberValue(r.otherExpenseTotal);
+      return `<tr class="monthly-main-row">
+        <td data-label="วันที่">${thaiDate(r.date)}</td>
+        <td data-label="ชื่อพนักงานในกะ">${(r.workerNames||[]).map(escapeHtml).join(", ") || "-"}</td>
+        <td data-label="รายได้รวมทั้งหมด" class="money">${money(r.totalAll)}</td>
+        <td data-label="รายจ่ายรวมทั้งหมด" class="money">${money(totalExpense)}</td>
+        <td data-label="เงินสดให้เจ้าของ" class="money">${money(r.ownerCashOut)}</td>
+        <td data-label="รายละเอียด"><button type="button" class="btn secondary small monthly-detail-btn" data-detail="${key}">แสดงรายละเอียด</button></td>
+      </tr>
+      <tr class="monthly-detail-row hidden" data-detail="${key}"><td colspan="6" class="monthly-detail-cell">${monthlySalesDetailHtml(r)}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
 }
 function dailyRowsToCsv(rows){
   const headers = ["date","thaiDate","branchId","branchName","closed","workerNames","grossSales","discount","netSales","cashSales","transferSales","lineMan","grab","totalAll","avgPerPerson","cashOpen","cashClose","cowMilkCost","cowMilkPaidTransfer","oatMilkCost","oatMilkPaidTransfer","milkCost","milkCashOut","otherExpenseTotal","otherExpenseCashOut","ownerCashOut","cashShouldRemain","cashDiff","cupsUsed","note"];
@@ -1178,8 +1235,8 @@ function calcDailyAttendancePay(r){
   if(r.status !== "ทำงาน") return 0;
   const pay = dailyPaySettings();
   if((r.workType || "full") === "full") return pay.fullDayAmount;
-  const halfHours = Math.max(0, Math.ceil((minutesFromTime(r.endTime)-minutesFromTime(r.startTime))/30));
-  return Math.min(pay.fullDayAmount, halfHours * pay.halfHourAmount);
+  const minutes = Math.max(0, minutesFromTime(r.endTime)-minutesFromTime(r.startTime));
+  return Math.min(pay.fullDayAmount, (minutes / 60) * pay.hourAmount);
 }
 async function renderAttendance(){
   const monthKey = currentMonthKey();
@@ -1340,12 +1397,28 @@ async function saveAdvance(e){
   await loadAdvances();
 }
 
+function canDeleteAdvance(row){
+  return isOwnerOrManager() || row.userId === appState.currentUser?.id || row.createdBy === appState.currentUser?.id;
+}
+async function deleteAdvance(id){
+  if(!requireOnline()) return;
+  const snap = await getDoc(doc(appState.db, "salaryAdvances", id));
+  if(!snap.exists()) return showToast("ไม่พบรายการเบิกเงินนี้");
+  const row = {id:snap.id, ...snap.data()};
+  if(!canDeleteAdvance(row)) return showToast("ลบได้เฉพาะรายการของตัวเองเท่านั้น");
+  if(!confirm(`ยืนยันลบรายการเบิกเงิน ${money(row.amount)} บาท ของ ${row.userName || userName(row.userId)} ใช่ไหม?`)) return;
+  await deleteDoc(doc(appState.db, "salaryAdvances", id));
+  await audit("ลบเงินเบิกล่วงหน้า", {user:row.userName || userName(row.userId), amount:row.amount, date:row.date}, row, null);
+  await afterWrite("advance_delete");
+  showToast("ลบรายการเบิกเงินแล้ว");
+  await loadAdvances();
+}
 async function loadAdvances(){
   const monthKey=$("#advanceMonth").value;
   const adminMode = isOwnerOrManager();
   const snap = await getDocs(query(collection(appState.db, "salaryAdvances"), where("monthKey","==",monthKey)));
   let rows = snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
-  if(!adminMode) rows = rows.filter(r=>r.userId === appState.currentUser.id);
+  if(!adminMode) rows = rows.filter(r=>r.userId === appState.currentUser.id || r.createdBy === appState.currentUser.id);
   const totals = {};
   rows.forEach(r=>totals[r.userId]=(totals[r.userId]||0)+numberValue(r.amount));
   $("#advanceResult").innerHTML = `
@@ -1353,9 +1426,11 @@ async function loadAdvances(){
       ${Object.keys(totals).length ? `<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th class="money">ยอดเบิกรวม</th></tr></thead><tbody>${Object.entries(totals).map(([id,total])=>`<tr><td>${escapeHtml(userName(id))}</td><td class="money">${money(total)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีข้อมูล</div>`}
     </div>
     <div class="panel"><h3>${adminMode ? "รายการทั้งหมด" : "รายการของฉัน"}</h3>
-      <div class="state ${adminMode?"ok":"warn"}">${adminMode ? "เจ้าของและผู้จัดการเห็นรายการเบิกเงินของทุกคน" : "หน้านี้แสดงเฉพาะรายการเบิกเงินของคุณเท่านั้น"}</div>
-      ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>วันที่</th><th>ชื่อ</th><th class="money">จำนวน</th><th>รายละเอียด</th><th>หมายเหตุ</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${thaiDate(r.date)}</td><td>${escapeHtml(r.userName||userName(r.userId))}</td><td class="money">${money(r.amount)}</td><td>${escapeHtml(r.detail)}</td><td>${escapeHtml(r.note)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีรายการ</div>`}
+      <div class="state ${adminMode?"ok":"warn"}">${adminMode ? "เจ้าของและผู้จัดการเห็นและลบรายการเบิกเงินของทุกคนได้" : "หน้านี้แสดงเฉพาะรายการเบิกเงินของคุณ และคุณลบรายการของตัวเองได้"}</div>
+      ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>วันที่</th><th>ชื่อ</th><th class="money">จำนวน</th><th>รายละเอียด</th><th>หมายเหตุ</th><th>จัดการ</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${thaiDate(r.date)}</td><td>${escapeHtml(r.userName||userName(r.userId))}</td><td class="money">${money(r.amount)}</td><td>${escapeHtml(r.detail)}</td><td>${escapeHtml(r.note)}</td><td>${canDeleteAdvance(r)?`<button type="button" class="btn danger small write-action delete-advance" data-id="${r.id}">ลบ</button>`:"-"}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีรายการ</div>`}
     </div>`;
+  $$(".delete-advance").forEach(btn=>btn.onclick = ()=>deleteAdvance(btn.dataset.id));
+  updateOnlineUi();
 }
 
 async function renderCompensation(){
@@ -1369,16 +1444,17 @@ async function renderCompensation(){
         <div class="field"><label>&nbsp;</label><button id="reloadComp" class="btn secondary">คำนวณใหม่</button></div>
       </div>
     </div>
-    <div class="panel">
-      <h3>ตั้งค่าค่าจ้างรายวัน</h3>
-      <div class="grid three">
-        <div class="field"><label>ทำงานทั้งวัน (บาท/วัน)</label><input id="dailyFullPay" inputmode="decimal" value="${numberValue((appState.settings.dailyWorkerPay||{}).fullDayAmount || 360)}"></div>
-        <div class="field"><label>รายชั่วโมง (บาท/ครึ่งชั่วโมง)</label><input id="dailyHalfHourPay" inputmode="decimal" value="${numberValue((appState.settings.dailyWorkerPay||{}).halfHourAmount || 20)}"></div>
-        <div class="field"><label>&nbsp;</label><button id="saveDailyPaySettings" class="btn write-action">บันทึกค่าจ้างรายวัน</button></div>
-      </div>
-      <small>ใช้สำหรับคำนวณค่าตอบแทนรายวันในตารางแยกด้านล่าง</small>
-    </div>
     <div id="compResult"></div>
+    <div class="panel daily-pay-settings-panel">
+      <h3>กำหนดค่าตอบแทนพนักงานรายวัน</h3>
+      <div class="state ok">เจ้าของและผู้จัดการแก้ได้ เผื่อกรณีขึ้นค่าจ้างรายวันหรือรายชั่วโมง ระบบจะใช้คำนวณจากหน้าเช็คชื่อพนักงานรายวัน</div>
+      <div class="grid three">
+        <div class="field"><label>ทำงานทั้งวัน (บาท/วัน)</label><input id="dailyFullPay" inputmode="decimal" value="${numberValue(dailyPaySettings().fullDayAmount)}"></div>
+        <div class="field"><label>รายชั่วโมง (บาท/ชั่วโมง)</label><input id="dailyHourPay" inputmode="decimal" value="${numberValue(dailyPaySettings().hourAmount)}"></div>
+        <div class="field"><label>&nbsp;</label><button id="saveDailyPaySettings" class="btn write-action">บันทึกค่าตอบแทนรายวัน</button></div>
+      </div>
+      <small>ถ้าทำงานครึ่งชั่วโมง ระบบจะคิดเป็นครึ่งหนึ่งของค่าจ้างรายชั่วโมงอัตโนมัติ</small>
+    </div>
     <div class="panel">
       <div class="flex"><h3>ตั้งค่าชนิดขนม / ราคา / % OT</h3><button id="addDessertSettingComp" class="btn secondary small write-action">+ เพิ่มชนิดขนม</button></div>
       <div class="state ok">หน้ายอดขายให้พนักงานกรอกแค่ “ทำขนมอะไร” และ “กี่ชิ้น” ส่วนราคาและเปอร์เซ็นต์แก้ได้ที่นี่โดยเจ้าของ/ผู้จัดการ</div>
@@ -1437,9 +1513,14 @@ async function loadCompensation(){
   const advSnap = await getDocs(query(collection(appState.db, "salaryAdvances"), where("monthKey","==",monthKey)));
   const advances = {};
   advSnap.docs.map(d=>d.data()).forEach(r=>advances[r.userId]=(advances[r.userId]||0)+numberValue(r.amount));
-  const compSnap = await getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",monthKey)));
+  const [compSnap, prevCompSnap] = await Promise.all([
+    getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",monthKey))),
+    getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",previousMonthKey(monthKey))))
+  ]);
   const records = {};
   compSnap.docs.forEach(d=>records[d.data().userId]=({id:d.id, ...d.data()}));
+  const prevRecords = {};
+  prevCompSnap.docs.forEach(d=>prevRecords[d.data().userId]=({id:d.id, ...d.data()}));
 
   const regularTable = regularPayUsers.length ? `<div class="table-wrap"><table>
     <thead><tr>
@@ -1450,7 +1531,9 @@ async function loadCompensation(){
     </tr></thead>
     <tbody>${regularPayUsers.map(u=>{
       const r = records[u.id] || {};
-      const salary = numberValue(r.salary);
+      const prevSalary = prevRecords[u.id]?.salary;
+      const salarySource = (r.salary !== undefined && r.salary !== null && r.salary !== "") ? r.salary : (prevSalary ?? "");
+      const salary = numberValue(salarySource);
       const employeeSS = salary * 0.05, employerSS = salary * 0.05;
       const otOther = numberValue(r.otOther);
       const boothBonus = numberValue(r.boothBonus);
@@ -1463,7 +1546,7 @@ async function loadCompensation(){
       const totalCost = salary + otOther + dessert + boothBonus + daily + monthly - deduction + employerSS;
       return `<tr class="comp-row" data-user="${u.id}" data-daily-role="0" data-daily-wage="0" data-daily-full-wage="0" data-daily-hourly-wage="0">
         <td>${escapeHtml(u.name)}</td><td>${roleBadge(u.role)}</td>
-        <td><input class="comp-salary wide-money" inputmode="decimal" value="${salary || ""}"></td>
+        <td><input class="comp-salary wide-money" inputmode="decimal" value="${salarySource === "" ? "" : salary}">${(r.salary === undefined || r.salary === null || r.salary === "") && salarySource !== "" ? `<small class="salary-copy-note">ลอกจากเดือนก่อน</small>` : ""}</td>
         <td><input class="comp-ot wide-money" inputmode="decimal" value="${otOther || ""}"></td>
         <td><input class="comp-ot-note" value="${escapeHtml(r.otOtherNote || "")}" placeholder="OT จากอะไร"></td>
         <td class="money comp-dessert" data-value="${dessert}">${money(dessert)}</td>
@@ -1524,7 +1607,7 @@ async function loadCompensation(){
   $("#compResult").innerHTML = `
     <div class="panel">
       <h3>ตารางค่าตอบแทนหัวหน้างาน/พนักงาน ${thaiMonth(monthKey)}</h3>
-      <div class="state ok">ตารางนี้ตัดช่องค่าจ้างรายวันออกแล้ว เพื่อให้สั้นและอ่านง่ายขึ้น</div>
+      <div class="state ok">ตารางนี้ตัดช่องค่าจ้างรายวันออกแล้ว เพื่อให้สั้นและอ่านง่ายขึ้น · เงินเดือนจะลอกจากเดือนก่อนหน้าให้อัตโนมัติเมื่อเดือนนี้ยังไม่เคยบันทึก</div>
       ${regularTable}
     </div>
     <div class="panel">
@@ -1703,10 +1786,11 @@ async function saveCompRow(row, monthKey){
 
 async function saveDailyPaySettings(){
   if(!requireOnline()) return;
-  const dailyWorkerPay = {fullDayAmount:numberValue($("#dailyFullPay").value), halfHourAmount:numberValue($("#dailyHalfHourPay").value)};
-  if(dailyWorkerPay.fullDayAmount <= 0 || dailyWorkerPay.halfHourAmount <= 0) return showToast("กรุณากรอกค่าจ้างรายวันให้ถูกต้อง");
-  await updateSettings({...appState.settings, dailyWorkerPay}, "ตั้งค่าค่าจ้างรายวัน");
-  showToast("บันทึกค่าจ้างรายวันแล้ว");
+  const hourAmount = numberValue($("#dailyHourPay").value);
+  const dailyWorkerPay = {fullDayAmount:numberValue($("#dailyFullPay").value), hourAmount, halfHourAmount:hourAmount / 2};
+  if(dailyWorkerPay.fullDayAmount <= 0 || dailyWorkerPay.hourAmount <= 0) return showToast("กรุณากรอกค่าตอบแทนรายวัน/รายชั่วโมงให้ถูกต้อง");
+  await updateSettings({...appState.settings, dailyWorkerPay}, "ตั้งค่าค่าตอบแทนพนักงานรายวัน");
+  showToast("บันทึกค่าตอบแทนพนักงานรายวันแล้ว");
   await loadCompensation();
 }
 async function renderHistory(){
@@ -1776,7 +1860,7 @@ async function renderBackup(){
   if(!isOwner()) return content().innerHTML = `<div class="state error">เฉพาะเจ้าของเท่านั้น</div>`;
   const auto = appState.settings.autoBackup || DEFAULT_SETTINGS.autoBackup;
   content().innerHTML = `
-    ${pageTitle("สำรองข้อมูล", "Export / Backup ไป Google Drive / Restore JSON หรือ CSV")}
+    ${pageTitle("สำรองข้อมูล", "Export / Backup ไป Google Drive / Restore เฉพาะไฟล์ JSON")}
     <div class="panel">
       <h3>Google Apps Script Web App URL</h3>
       <div class="field"><label>URL</label><input id="backupUrl" value="${escapeHtml(auto.url || "")}" placeholder="https://script.google.com/macros/s/.../exec"></div>
@@ -1791,14 +1875,13 @@ async function renderBackup(){
         <button id="testBackupUrl" class="btn secondary write-action">ทดสอบสร้างไฟล์ใน Drive</button>
         <button id="manualBackup" class="btn write-action">Backup ไป Drive ตอนนี้</button>
         <button id="exportFullJson" class="btn secondary">Export JSON</button>
-        <button id="exportSalesCsv" class="btn secondary">Export CSV ยอดขาย</button>
       </div>
       <div id="backupState"></div>
     </div>
     <div class="panel">
       <h3>Restore Backup</h3>
       <div class="state warn">ก่อน Restore ระบบจะสร้าง Backup ปัจจุบันให้อีกชุด และต้องกรอก PIN เจ้าของยืนยัน</div>
-      <div class="field"><label>เลือกไฟล์ JSON / CSV / Excel ที่ดาวน์โหลดจาก Google Sheet</label><input id="restoreFile" type="file" accept=".json,.csv,.xlsx,.xls,application/json,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div>
+      <div class="field"><label>เลือกไฟล์ JSON Backup</label><input id="restoreFile" type="file" accept=".json,application/json"></div>
       <div id="restorePreview"></div>
       <div class="grid two">
         <div class="field"><label>PIN เจ้าของ</label><input id="restorePin" type="password" inputmode="numeric" maxlength="4" placeholder="••••"></div>
@@ -1809,7 +1892,6 @@ async function renderBackup(){
   $("#testBackupUrl").onclick = testBackupUrl;
   $("#manualBackup").onclick = ()=>performBackup("manual", false);
   $("#exportFullJson").onclick = async ()=>downloadText(`LoveMatcha_FullBackup_${new Date().toISOString().slice(0,19).replaceAll(":","-")}.json`, JSON.stringify(await buildFullBackup(), null, 2), "application/json");
-  $("#exportSalesCsv").onclick = exportAllSalesCsv;
   $("#restoreFile").onchange = handleRestoreFile;
   $("#restoreBtn").onclick = restoreData;
   updateOnlineUi();
@@ -1893,7 +1975,7 @@ async function testBackupUrl(){
   if(!url) return showToast("กรุณากรอก URL ก่อน");
   const testUrl = `${url}${url.includes("?") ? "&" : "?"}action=test&source=love_matcha_sales_app&ts=${Date.now()}`;
   window.open(testUrl, "_blank", "noopener,noreferrer");
-  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.3.2 และมี jsonFileName / sheetName / folderUrl ถ้ายังขึ้น v1.2 แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
+  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.3.3 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
 }
 async function exportAllSalesCsv(){
   const snap = await getDocs(collection(appState.db, "dailySales"));
@@ -1903,42 +1985,20 @@ async function exportAllSalesCsv(){
 async function handleRestoreFile(){
   const file = $("#restoreFile").files[0];
   if(!file) return;
-  let preview;
   const lower = file.name.toLowerCase();
-  if(lower.endsWith(".json")){
-    const text = await file.text();
-    const obj = JSON.parse(text);
-    if(!obj.collections) throw new Error("ไฟล์ JSON ไม่ใช่รูปแบบ Backup ของระบบ");
-    preview = {type:"json", data:obj, counts:Object.fromEntries(Object.entries(obj.collections).map(([k,v])=>[k, Array.isArray(v)?v.length:0]))};
-  }else if(lower.endsWith(".xlsx") || lower.endsWith(".xls")){
-    preview = await parseWorkbookBackup(file);
-  }else{
-    const text = await file.text();
-    const rows = parseCsv(text);
-    preview = {type:"csv", rows, counts:{dailySales:Math.max(0, rows.length-1)}};
+  if(!lower.endsWith(".json")){
+    appState.restorePreview = null;
+    $("#restorePreview").innerHTML = `<div class="state error">v1.3.3 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
+    $("#restoreBtn").disabled = true;
+    return;
   }
+  const text = await file.text();
+  const obj = JSON.parse(text);
+  if(!obj.collections) throw new Error("ไฟล์ JSON ไม่ใช่รูปแบบ Backup ของระบบ");
+  const preview = {type:"json", data:obj, counts:Object.fromEntries(Object.entries(obj.collections).map(([k,v])=>[k, Array.isArray(v)?v.length:0]))};
   appState.restorePreview = preview;
-  $("#restorePreview").innerHTML = `<div class="state ok"><b>Preview:</b><pre class="preview">${escapeHtml(JSON.stringify(preview.counts, null, 2))}</pre></div>`;
+  $("#restorePreview").innerHTML = `<div class="state ok"><b>Preview JSON:</b><pre class="preview">${escapeHtml(JSON.stringify(preview.counts, null, 2))}</pre></div>`;
   $("#restoreBtn").disabled = !appState.online;
-}
-async function parseWorkbookBackup(file){
-  if(!window.XLSX) throw new Error("ยังโหลดตัวอ่าน Excel ไม่สำเร็จ กรุณาเช็กอินเทอร์เน็ตแล้วลองใหม่");
-  const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, {type:"array"});
-  const collections = {};
-  wb.SheetNames.forEach(name=>{
-    const col = COLLECTIONS.includes(name) ? name : null;
-    if(!col) return;
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], {defval:""});
-    collections[col] = rows.map(r=>{
-      let data = {};
-      if(r.json){ try{ data = JSON.parse(r.json); }catch(_){ data = {}; } }
-      else { data = {...r}; delete data.id; }
-      return {id:String(r.id || uid(col)), data};
-    });
-  });
-  if(!Object.keys(collections).length) throw new Error("ไฟล์ Excel/Sheet ไม่ใช่รูปแบบ Backup ของระบบ");
-  return {type:"json", data:{app:"Love Matcha Sales", version:VERSION, importedFrom:file.name, collections}, counts:Object.fromEntries(Object.entries(collections).map(([k,v])=>[k,v.length]))};
 }
 function parseCsv(text){
   const rows=[]; let row=[], cell="", quote=false;
