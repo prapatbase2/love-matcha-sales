@@ -6,7 +6,7 @@ import {
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const VERSION = "v1.3.3";
+const VERSION = "v1.3.4";
 const DEFAULT_BACKUP_URL = "https://script.google.com/macros/s/AKfycbz7pwTBSDwVwja4ugxvlJoNYb4ksBk7METKzGd3bCARUzea99Sx0BTAJHIDi5N2iW7e/exec";
 const COLLECTIONS = [
   "users","branches","dailySales","dailyDrafts","dailyExpenses","cupCounts","dessertOT",
@@ -443,7 +443,7 @@ async function afterWrite(actionName){
   if(!appState.settings?.autoBackup) return;
   const mode = appState.settings.autoBackup.mode || "off";
   if(mode === "onAction" || mode === "both"){
-    // v1.3.3: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
+    // v1.3.4: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
     setTimeout(()=>performBackup(`auto_${actionName}`, true).catch(e=>console.warn("auto backup", e)), 0);
   }
 }
@@ -668,16 +668,16 @@ async function renderDaily(){
   const b = visibleBranches()[0];
   const date = todayISO();
   content().innerHTML = `
-    ${pageTitle("บันทึกยอดขายรายวัน", "เลือกวันและสาขา แล้วบันทึกข้อมูลการขาย")}
-    <form id="dailyForm">
-      <div class="panel daily-panel daily-panel-head">
-        <h3>วันที่ / สาขา</h3>
-        <div class="grid three">
+    ${pageTitle("บันทึกยอดขายรายวัน")}
+    <form id="dailyForm" class="daily-form-wide">
+      <div class="panel daily-panel daily-panel-head daily-control-panel">
+        <h3>วันที่ / สาขา / สถานะร้าน</h3>
+        <div class="daily-control-grid">
           <div class="field"><label>เดือน</label><input id="dailyMonth" type="month" value="${date.slice(0,7)}"></div>
           <div class="field"><label>วันที่</label><input id="dailyDate" type="date" value="${date}"><small id="dailyThaiDate">${thaiDate(date)}</small></div>
           <div class="field"><label>สาขา</label><select id="dailyBranch">${branchOptions({selected:b?.id})}</select></div>
+          <label class="check-item daily-closed-control"><input id="dailyClosed" type="checkbox"> หยุดร้านวันนี้</label>
         </div>
-        <label class="check-item" style="margin-top:10px"><input id="dailyClosed" type="checkbox"> หยุดร้านวันนี้</label>
       </div>
 
       <div id="openShopFields">
@@ -1437,27 +1437,24 @@ async function renderCompensation(){
   if(!isOwnerOrManager()) return content().innerHTML = `<div class="state error">ไม่มีสิทธิ์เข้าหน้านี้</div>`;
   const monthKey = currentMonthKey();
   content().innerHTML = `
-    ${pageTitle("ค่าตอบแทน", "คำนวณเงินเดือน โบนัส OT เบิกล่วงหน้า และประกันสังคม")}
-    <div class="panel">
-      <div class="grid three">
+    ${pageTitle("ค่าตอบแทน")}
+    <div class="panel comp-filter-panel">
+      <div class="grid three compact-grid">
         <div class="field"><label>เดือน</label><input id="compMonth" type="month" value="${monthKey}"></div>
         <div class="field"><label>&nbsp;</label><button id="reloadComp" class="btn secondary">คำนวณใหม่</button></div>
       </div>
     </div>
     <div id="compResult"></div>
-    <div class="panel daily-pay-settings-panel">
-      <h3>กำหนดค่าตอบแทนพนักงานรายวัน</h3>
-      <div class="state ok">เจ้าของและผู้จัดการแก้ได้ เผื่อกรณีขึ้นค่าจ้างรายวันหรือรายชั่วโมง ระบบจะใช้คำนวณจากหน้าเช็คชื่อพนักงานรายวัน</div>
-      <div class="grid three">
+    <div class="panel daily-pay-settings-panel compact-panel">
+      <h3>ค่าตอบแทนพนักงานรายวัน</h3>
+      <div class="grid three compact-grid">
         <div class="field"><label>ทำงานทั้งวัน (บาท/วัน)</label><input id="dailyFullPay" inputmode="decimal" value="${numberValue(dailyPaySettings().fullDayAmount)}"></div>
         <div class="field"><label>รายชั่วโมง (บาท/ชั่วโมง)</label><input id="dailyHourPay" inputmode="decimal" value="${numberValue(dailyPaySettings().hourAmount)}"></div>
         <div class="field"><label>&nbsp;</label><button id="saveDailyPaySettings" class="btn write-action">บันทึกค่าตอบแทนรายวัน</button></div>
       </div>
-      <small>ถ้าทำงานครึ่งชั่วโมง ระบบจะคิดเป็นครึ่งหนึ่งของค่าจ้างรายชั่วโมงอัตโนมัติ</small>
     </div>
-    <div class="panel">
-      <div class="flex"><h3>ตั้งค่าชนิดขนม / ราคา / % OT</h3><button id="addDessertSettingComp" class="btn secondary small write-action">+ เพิ่มชนิดขนม</button></div>
-      <div class="state ok">หน้ายอดขายให้พนักงานกรอกแค่ “ทำขนมอะไร” และ “กี่ชิ้น” ส่วนราคาและเปอร์เซ็นต์แก้ได้ที่นี่โดยเจ้าของ/ผู้จัดการ</div>
+    <div class="panel compact-panel">
+      <div class="flex"><h3>ชนิดขนม / ราคา / % OT</h3><button id="addDessertSettingComp" class="btn secondary small write-action">+ เพิ่มชนิดขนม</button></div>
       <div id="dessertSettingsRows" class="grid">${dessertSettingRows()}</div>
       <button id="saveDessertSettingsComp" class="btn write-action" style="margin-top:10px">บันทึกชนิดขนม</button>
     </div>`;
@@ -1975,7 +1972,7 @@ async function testBackupUrl(){
   if(!url) return showToast("กรุณากรอก URL ก่อน");
   const testUrl = `${url}${url.includes("?") ? "&" : "?"}action=test&source=love_matcha_sales_app&ts=${Date.now()}`;
   window.open(testUrl, "_blank", "noopener,noreferrer");
-  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.3.3 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
+  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.3.4 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
 }
 async function exportAllSalesCsv(){
   const snap = await getDocs(collection(appState.db, "dailySales"));
@@ -1988,7 +1985,7 @@ async function handleRestoreFile(){
   const lower = file.name.toLowerCase();
   if(!lower.endsWith(".json")){
     appState.restorePreview = null;
-    $("#restorePreview").innerHTML = `<div class="state error">v1.3.3 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
+    $("#restorePreview").innerHTML = `<div class="state error">v1.3.4 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
     $("#restoreBtn").disabled = true;
     return;
   }

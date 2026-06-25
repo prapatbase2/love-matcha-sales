@@ -205,7 +205,7 @@ body.is-offline #pageContent textarea{
   .sales-table tr.closed-short-row td[colspan]::before{content:"สรุป"}
 }
 
-/* v1.3.3: หน้า ยอดขาย / รายเดือน ให้ใช้มือถือจอแคบง่ายขึ้น */
+/* v1.3.4: หน้า ยอดขาย / รายเดือน ให้ใช้มือถือจอแคบง่ายขึ้น */
 .daily-panel{box-shadow:0 6px 20px rgba(24,42,16,.055)}
 .daily-panel-head{background:linear-gradient(135deg,#ffffff,#f5f9f1)}
 .daily-section{position:relative;overflow:hidden}
@@ -253,4 +253,37 @@ body.is-offline #pageContent textarea{
   .monthly-simple-table tr.closed-short-row td[colspan]{display:table-cell;text-align:left;background:#fff8df}
   .monthly-detail-toolbar{position:sticky;top:74px;z-index:2;flex-direction:column;align-items:stretch}
   .monthly-detail-toolbar .btn{width:100%}
+}
+
+/* v1.3.4: หน้ายอดขายกรอกง่ายขึ้น - ไม่ล็อกแถบเดือน/วันที่/สาขาไว้บนจอ */
+.daily-form-wide{max-width:1320px;margin:0 auto}
+.daily-control-panel{position:static!important;top:auto!important;z-index:auto!important;margin-bottom:10px;padding:12px 14px;background:linear-gradient(135deg,#ffffff,#f7fbf2)}
+.daily-control-panel h3{margin-bottom:10px}
+.daily-control-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:end}
+.daily-control-grid .field{min-width:0}
+.daily-closed-control{height:100%;min-height:48px;align-items:center;justify-content:center;font-weight:900;background:#fffaf1;border-color:#efd894;color:#795200;margin:0}
+.daily-panel-head .grid.three{gap:10px}
+@media(min-width:1180px){
+  .daily-form-wide .grid.three{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .daily-form-wide .sales-section .grid.three{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .daily-form-wide .cash-section .grid.three{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .daily-form-wide .cup-section .grid.three{grid-template-columns:repeat(5,minmax(0,1fr))}
+}
+@media(max-width:680px){
+  .daily-control-panel{position:static!important;top:auto!important;padding:10px;margin:8px 0 10px;border-radius:16px}
+  .daily-control-panel h3{font-size:1rem;margin-bottom:8px}
+  .daily-control-grid{grid-template-columns:1fr 1fr;gap:8px}
+  .daily-control-grid .field label{font-size:.9rem}
+  .daily-control-grid input,.daily-control-grid select{padding:10px 9px;border-radius:12px;min-height:42px}
+  .daily-closed-control{grid-column:1 / -1;min-height:44px;padding:9px;border-radius:12px}
+}
+@media(max-width:380px){.daily-control-grid{grid-template-columns:1fr}}
+
+/* v1.3.4: หน้าค่าตอบแทนตัดคำอธิบายยาว ให้พื้นที่ตารางมากขึ้น */
+.comp-filter-panel,.compact-panel{padding:12px;margin:10px 0}
+.compact-panel h3{margin-bottom:8px}
+.compact-grid{align-items:end}
+@media(max-width:680px){
+  .comp-filter-panel,.compact-panel{padding:10px;margin:8px 0;border-radius:16px}
+  .comp-filter-panel .grid.three,.compact-panel .grid.three{grid-template-columns:1fr}
 }
