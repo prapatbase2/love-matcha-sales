@@ -205,7 +205,7 @@ body.is-offline #pageContent textarea{
   .sales-table tr.closed-short-row td[colspan]::before{content:"สรุป"}
 }
 
-/* v1.3.5: หน้า ยอดขาย / รายเดือน ให้ใช้มือถือจอแคบง่ายขึ้น */
+/* v1.3.7: หน้า ยอดขาย / รายเดือน ให้ใช้มือถือจอแคบง่ายขึ้น */
 .daily-panel{box-shadow:0 6px 20px rgba(24,42,16,.055)}
 .daily-panel-head{background:linear-gradient(135deg,#ffffff,#f5f9f1)}
 .daily-section{position:relative;overflow:hidden}
@@ -255,7 +255,7 @@ body.is-offline #pageContent textarea{
   .monthly-detail-toolbar .btn{width:100%}
 }
 
-/* v1.3.5: หน้ายอดขายกรอกง่ายขึ้น - ไม่ล็อกแถบเดือน/วันที่/สาขาไว้บนจอ */
+/* v1.3.7: หน้ายอดขายกรอกง่ายขึ้น - ไม่ล็อกแถบเดือน/วันที่/สาขาไว้บนจอ */
 .daily-form-wide{max-width:1320px;margin:0 auto}
 .daily-control-panel{position:static!important;top:auto!important;z-index:auto!important;margin-bottom:10px;padding:12px 14px;background:linear-gradient(135deg,#ffffff,#f7fbf2)}
 .daily-control-panel h3{margin-bottom:10px}
@@ -279,7 +279,7 @@ body.is-offline #pageContent textarea{
 }
 @media(max-width:380px){.daily-control-grid{grid-template-columns:1fr}}
 
-/* v1.3.5: หน้าค่าตอบแทนตัดคำอธิบายยาว ให้พื้นที่ตารางมากขึ้น */
+/* v1.3.7: หน้าค่าตอบแทนตัดคำอธิบายยาว ให้พื้นที่ตารางมากขึ้น */
 .comp-filter-panel,.compact-panel{padding:12px;margin:10px 0}
 .compact-panel h3{margin-bottom:8px}
 .compact-grid{align-items:end}
@@ -289,7 +289,7 @@ body.is-offline #pageContent textarea{
 }
 
 
-/* v1.3.5: หน้ายอดขายสีชัดขึ้น + ช่องกรอกกระชับสำหรับมือถือจอแคบ */
+/* v1.3.7: หน้ายอดขายสีชัดขึ้น + ช่องกรอกกระชับสำหรับมือถือจอแคบ */
 .daily-panel{box-shadow:0 8px 22px rgba(24,42,16,.075)}
 .daily-control-panel{background:linear-gradient(135deg,#f1f8ea,#e8f2df);border-color:#c8dac0}
 .staff-section{background:#edf7e4;border-color:#c8dac0}
@@ -318,7 +318,7 @@ body.is-offline #pageContent textarea{
 .daily-form-wide .btn.small{padding:7px 9px}
 .expense-row{background:rgba(255,255,255,.72);border-color:#dec78f}
 
-/* v1.3.5: รายละเอียดรายเดือนเป็นตารางคู่ ซ้าย-ขวา เลื่อนแนวนอนได้ */
+/* v1.3.7: รายละเอียดรายเดือนเป็นตารางคู่ ซ้าย-ขวา เลื่อนแนวนอนได้ */
 .monthly-simple-table{min-width:660px}
 .monthly-detail-cell{background:#f1f5ea!important;padding:10px!important;white-space:normal!important}
 .monthly-detail-card{background:#edf4e6;border:1px solid #c8dac0;border-radius:18px;padding:10px;box-shadow:0 6px 18px rgba(24,42,16,.06)}
@@ -381,44 +381,33 @@ body.is-offline #pageContent textarea{
 }
 
 
-/* v1.3.6: หน้ารายเดือน - กดแสดงรายละเอียดแล้วตารางหลักต้องไม่ถูกดันกว้างขึ้น */
-.monthly-simple-wrap{
-  width:100%;
-  max-width:100%;
-  overflow-x:auto;
-  -webkit-overflow-scrolling:touch;
-  overscroll-behavior-x:contain;
-}
+/* v1.3.7: รายเดือนมือถือ - เปิดรายละเอียดแล้วไม่ดันตารางกว้างขึ้น */
 .monthly-simple-table{
-  width:100%;
-  min-width:660px;
-  table-layout:fixed;
-  border-collapse:collapse;
+  table-layout:fixed!important;
+  width:100%!important;
+  min-width:640px!important;
 }
-.monthly-simple-table .monthly-date-col{width:14%}
-.monthly-simple-table .monthly-worker-col{width:24%}
-.monthly-simple-table .monthly-money-col{width:17%}
-.monthly-simple-table .monthly-action-col{width:11%}
 .monthly-simple-table th,
 .monthly-simple-table td{
   overflow-wrap:break-word;
-  word-break:normal;
-  vertical-align:middle;
+  word-break:break-word;
 }
-.monthly-simple-table th{
-  white-space:normal!important;
-  line-height:1.25;
-}
-.monthly-simple-table td[data-label="ชื่อพนักงานในกะ"]{
-  white-space:normal!important;
-  line-height:1.3;
-}
-.monthly-simple-table td.money,
+.monthly-simple-table th:nth-child(1),
+.monthly-simple-table td:nth-child(1){width:15%}
+.monthly-simple-table th:nth-child(2),
+.monthly-simple-table td:nth-child(2){width:25%;min-width:0!important;white-space:normal!important}
+.monthly-simple-table th:nth-child(3),
+.monthly-simple-table td:nth-child(3){width:16%}
+.monthly-simple-table th:nth-child(4),
+.monthly-simple-table td:nth-child(4){width:16%}
+.monthly-simple-table th:nth-child(5),
+.monthly-simple-table td:nth-child(5){width:16%}
+.monthly-simple-table th:nth-child(6),
+.monthly-simple-table td:nth-child(6){width:12%}
 .monthly-simple-table .money,
-.monthly-simple-table .money-value{
+.monthly-simple-table th.money{
   white-space:nowrap!important;
-  overflow-wrap:normal;
-  word-break:normal;
+  text-align:right!important;
 }
 .monthly-simple-table .monthly-detail-row{
   display:table-row!important;
@@ -428,55 +417,124 @@ body.is-offline #pageContent textarea{
 }
 .monthly-simple-table .monthly-detail-cell{
   display:table-cell!important;
-  width:auto!important;
-  max-width:none!important;
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
   overflow:hidden!important;
   white-space:normal!important;
+  padding:8px!important;
 }
-.monthly-detail-cell::before{
+.monthly-simple-table .monthly-detail-cell::before{
   content:none!important;
   display:none!important;
 }
 .monthly-detail-card{
-  width:100%;
-  max-width:100%;
-  overflow:hidden;
+  width:100%!important;
+  max-width:100%!important;
+  min-width:0!important;
+  overflow:hidden!important;
 }
 .monthly-detail-scroll{
-  width:100%;
-  max-width:100%;
-  overflow-x:auto;
+  width:100%!important;
+  max-width:100%!important;
+  min-width:0!important;
+  overflow-x:auto!important;
+  overflow-y:visible!important;
   -webkit-overflow-scrolling:touch;
-  overscroll-behavior-x:contain;
 }
 .monthly-detail-columns{
-  width:max-content;
-  max-width:none;
-  min-width:100%;
+  width:100%!important;
+  max-width:100%!important;
+  min-width:0!important;
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
 }
 .detail-table-card{
-  width:clamp(270px, 32vw, 370px);
-  flex:0 0 auto;
+  min-width:0!important;
+  max-width:none!important;
+  width:100%!important;
+  overflow:hidden!important;
+}
+.detail-table{
+  table-layout:fixed!important;
+  width:100%!important;
+  min-width:0!important;
+}
+.detail-table th{width:48%!important;overflow-wrap:break-word;word-break:break-word}
+.detail-table td{width:52%!important;overflow-wrap:anywhere;word-break:break-word}
+.money-value{max-width:100%;white-space:normal;overflow-wrap:anywhere;word-break:keep-all}
+.detail-mini-item{min-width:0!important;overflow:hidden}
+.detail-mini-item span{white-space:normal!important;overflow-wrap:anywhere;word-break:keep-all}
+
+@media(max-width:720px){
+  .monthly-simple-table{min-width:600px!important;font-size:.9rem}
+  .monthly-simple-table th,
+  .monthly-simple-table td{padding:8px 7px!important;line-height:1.25}
+  .monthly-simple-table th:nth-child(1),
+  .monthly-simple-table td:nth-child(1){width:17%}
+  .monthly-simple-table th:nth-child(2),
+  .monthly-simple-table td:nth-child(2){width:24%}
+  .monthly-simple-table th:nth-child(3),
+  .monthly-simple-table td:nth-child(3){width:15%}
+  .monthly-simple-table th:nth-child(4),
+  .monthly-simple-table td:nth-child(4){width:15%}
+  .monthly-simple-table th:nth-child(5),
+  .monthly-simple-table td:nth-child(5){width:16%}
+  .monthly-simple-table th:nth-child(6),
+  .monthly-simple-table td:nth-child(6){width:13%}
+  .monthly-simple-table .monthly-detail-cell{padding:7px!important;background:#f1f5ea!important}
+  .monthly-detail-card{padding:7px!important;border-radius:14px!important}
+  .monthly-detail-toolbar{position:static!important;top:auto!important;display:flex!important;flex-direction:row!important;align-items:center!important;justify-content:space-between!important;gap:6px!important;padding:8px!important}
+  .monthly-detail-toolbar b{font-size:.92rem}
+  .monthly-detail-toolbar .btn{width:auto!important;white-space:nowrap}
+  .monthly-detail-columns{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:7px!important}
+  .detail-table-card{padding:8px!important;border-radius:13px!important}
+  .detail-table-card h4{font-size:.9rem!important;white-space:normal!important;line-height:1.2}
+  .detail-table th,.detail-table td{padding:6px!important;font-size:.82rem!important;line-height:1.22!important}
+  .detail-expense-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:6px!important}
+  .detail-mini-item{padding:7px!important;border-radius:12px!important}
+  .detail-mini-item b,.detail-mini-item span,.detail-mini-item small{font-size:.82rem!important;line-height:1.2!important}
+}
+@media(max-width:420px){
+  .monthly-simple-table{min-width:560px!important;font-size:.84rem}
+  .monthly-simple-table th,
+  .monthly-simple-table td{padding:7px 6px!important}
+  .monthly-detail-columns{grid-template-columns:1fr!important}
+  .detail-expense-grid{grid-template-columns:1fr!important}
+}
+
+/* v1.3.7: ปรับช่องปุ่มรายละเอียดให้ไม่เบียดบนมือถือ */
+.monthly-simple-table th:nth-child(1),
+.monthly-simple-table td:nth-child(1){width:15%!important}
+.monthly-simple-table th:nth-child(2),
+.monthly-simple-table td:nth-child(2){width:24%!important}
+.monthly-simple-table th:nth-child(3),
+.monthly-simple-table td:nth-child(3){width:15%!important}
+.monthly-simple-table th:nth-child(4),
+.monthly-simple-table td:nth-child(4){width:15%!important}
+.monthly-simple-table th:nth-child(5),
+.monthly-simple-table td:nth-child(5){width:16%!important}
+.monthly-simple-table th:nth-child(6),
+.monthly-simple-table td:nth-child(6){width:15%!important}
+.monthly-simple-table .monthly-detail-btn{
+  width:100%;
+  min-width:0;
+  padding:6px 5px;
+  font-size:.8rem;
+  line-height:1.15;
+  white-space:normal;
+  overflow-wrap:anywhere;
 }
 @media(max-width:720px){
-  .monthly-simple-wrap{max-width:100vw}
-  .monthly-simple-table{min-width:640px}
-  .monthly-simple-table th,
-  .monthly-simple-table td{font-size:.9rem;padding:8px 7px}
-  .monthly-simple-table .monthly-date-col{width:15%}
-  .monthly-simple-table .monthly-worker-col{width:23%}
-  .monthly-simple-table .monthly-money-col{width:17%}
-  .monthly-simple-table .monthly-action-col{width:11%}
-  .monthly-simple-table .btn.small{padding:7px 8px;white-space:normal;line-height:1.15}
-  .monthly-simple-table .monthly-detail-row{display:table-row!important}
-  .monthly-simple-table .monthly-detail-row.hidden{display:none!important}
-  .monthly-simple-table .monthly-detail-cell{display:table-cell!important;padding:8px!important;border-bottom:1px solid var(--line)!important}
-  .detail-table-card{width:280px;min-width:280px;max-width:280px}
-}
-@media(max-width:380px){
-  .monthly-simple-table{min-width:620px}
-  .monthly-simple-table th,
-  .monthly-simple-table td{font-size:.84rem;padding:7px 6px}
-  .monthly-simple-table .btn.small{font-size:.82rem;padding:6px 6px}
-  .detail-table-card{width:270px;min-width:270px;max-width:270px}
+  .monthly-simple-table th:nth-child(1),
+  .monthly-simple-table td:nth-child(1){width:16%!important}
+  .monthly-simple-table th:nth-child(2),
+  .monthly-simple-table td:nth-child(2){width:23%!important}
+  .monthly-simple-table th:nth-child(3),
+  .monthly-simple-table td:nth-child(3){width:15%!important}
+  .monthly-simple-table th:nth-child(4),
+  .monthly-simple-table td:nth-child(4){width:15%!important}
+  .monthly-simple-table th:nth-child(5),
+  .monthly-simple-table td:nth-child(5){width:16%!important}
+  .monthly-simple-table th:nth-child(6),
+  .monthly-simple-table td:nth-child(6){width:15%!important}
 }

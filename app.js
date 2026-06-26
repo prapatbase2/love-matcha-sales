@@ -6,7 +6,7 @@ import {
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const VERSION = "v1.3.6";
+const VERSION = "v1.3.7";
 const DEFAULT_BACKUP_URL = "https://script.google.com/macros/s/AKfycbz7pwTBSDwVwja4ugxvlJoNYb4ksBk7METKzGd3bCARUzea99Sx0BTAJHIDi5N2iW7e/exec";
 const COLLECTIONS = [
   "users","branches","dailySales","dailyDrafts","dailyExpenses","cupCounts","dessertOT",
@@ -443,7 +443,7 @@ async function afterWrite(actionName){
   if(!appState.settings?.autoBackup) return;
   const mode = appState.settings.autoBackup.mode || "off";
   if(mode === "onAction" || mode === "both"){
-    // v1.3.5: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
+    // v1.3.7: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
     setTimeout(()=>performBackup(`auto_${actionName}`, true).catch(e=>console.warn("auto backup", e)), 0);
   }
 }
@@ -1156,7 +1156,6 @@ function monthlyBranchTables(rows, selectedBranchId="ALL"){
 function monthlyRowsTable(rows, branchId){
   if(!rows.length) return `<div class="empty compact">ยังไม่มีข้อมูลสาขานี้</div>`;
   return `<div class="table-wrap monthly-simple-wrap"><table class="monthly-simple-table">
-    <colgroup><col class="monthly-date-col"><col class="monthly-worker-col"><col class="monthly-money-col"><col class="monthly-money-col"><col class="monthly-money-col"><col class="monthly-action-col"></colgroup>
     <thead><tr><th>วันที่</th><th>ชื่อพนักงานในกะ</th><th class="money">รายได้รวมทั้งหมด</th><th class="money">รายจ่ายรวมทั้งหมด</th><th class="money">เงินสดให้เจ้าของ</th><th>รายละเอียด</th></tr></thead>
     <tbody>${rows.map((r,i)=>{
       const key = `${branchId}_${i}`;
@@ -1992,7 +1991,7 @@ async function testBackupUrl(){
   if(!url) return showToast("กรุณากรอก URL ก่อน");
   const testUrl = `${url}${url.includes("?") ? "&" : "?"}action=test&source=love_matcha_sales_app&ts=${Date.now()}`;
   window.open(testUrl, "_blank", "noopener,noreferrer");
-  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.3.6 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
+  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.3.7 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
 }
 async function exportAllSalesCsv(){
   const snap = await getDocs(collection(appState.db, "dailySales"));
@@ -2005,7 +2004,7 @@ async function handleRestoreFile(){
   const lower = file.name.toLowerCase();
   if(!lower.endsWith(".json")){
     appState.restorePreview = null;
-    $("#restorePreview").innerHTML = `<div class="state error">v1.3.6 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
+    $("#restorePreview").innerHTML = `<div class="state error">v1.3.7 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
     $("#restoreBtn").disabled = true;
     return;
   }
