@@ -6,7 +6,7 @@ import {
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const VERSION = "v1.3.5";
+const VERSION = "v1.3.6";
 const DEFAULT_BACKUP_URL = "https://script.google.com/macros/s/AKfycbz7pwTBSDwVwja4ugxvlJoNYb4ksBk7METKzGd3bCARUzea99Sx0BTAJHIDi5N2iW7e/exec";
 const COLLECTIONS = [
   "users","branches","dailySales","dailyDrafts","dailyExpenses","cupCounts","dessertOT",
@@ -443,7 +443,7 @@ async function afterWrite(actionName){
   if(!appState.settings?.autoBackup) return;
   const mode = appState.settings.autoBackup.mode || "off";
   if(mode === "onAction" || mode === "both"){
-    // v1.3.5: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
+    // v1.3.6: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
     setTimeout(()=>performBackup(`auto_${actionName}`, true).catch(e=>console.warn("auto backup", e)), 0);
   }
 }
@@ -585,45 +585,57 @@ function salesTable(rows, options={}){
 
 function monthlySalesDetailHtml(r){
   const expenses = r.expenses || [];
-  const expensesHtml = expenses.length
-    ? `<div class="detail-mini-list">${expenses.map(e=>`<div class="detail-mini-item"><b>${escapeHtml(e.name||e.detail||"รายจ่ายอื่น")}</b><span>${money(e.amount)} บาท</span><small>${e.paidByTransfer?"โอนจ่าย — ไม่หักเงินสด":"เงินสด — หักเงินสด"}${e.note?` · ${escapeHtml(e.note)}`:""}</small></div>`).join("")}</div>`
-    : `<div class="empty compact">ไม่มีรายจ่ายอื่น</div>`;
   const milkCash = numberValue(r.milkCashOut ?? r.milkCost);
   const expenseCash = numberValue(r.otherExpenseCashOut ?? r.otherExpenseTotal);
+  const detailRows = rows => rows.map(([label, value, strong=false])=>`<tr class="${strong?"strong-row":""}"><th>${label}</th><td>${value}</td></tr>`).join("");
+  const salesRows = [
+    ["พนักงานในกะ", (r.workerNames||[]).map(escapeHtml).join(", ") || "-"],
+    ["ยอดขายก่อนส่วนลด", `${money(r.grossSales)} บาท`],
+    ["ส่วนลด", `${money(r.discount)} บาท`],
+    ["รายได้รวม", `${money(r.netSales)} บาท`],
+    ["เงินสด", `${money(r.cashSales)} บาท`],
+    ["เงินโอน", `${money(r.transferSales)} บาท`],
+    ["Line Man", `${money(r.lineMan)} บาท`],
+    ["Grab", `${money(r.grab)} บาท`],
+    ["รายได้รวมทั้งหมด", `${money(r.totalAll)} บาท`, true]
+  ];
+  const cashRows = [
+    ["เงินสดเปิดกะ", `${money(r.cashOpen)} บาท`],
+    ["เงินสดปิดกะ", `${money(r.cashClose)} บาท`],
+    ["ค่านมรวม", `${money(r.milkCost)} บาท`],
+    ["นมวัว", `${money(r.cowMilkCost ?? r.milkCost)} บาท ${r.cowMilkPaidTransfer?"(โอนจ่าย)":""}`],
+    ["นมโอ๊ต", `${money(r.oatMilkCost)} บาท ${r.oatMilkPaidTransfer?"(โอนจ่าย)":""}`],
+    ["ค่านมที่หักเงินสด", `${money(milkCash)} บาท`],
+    ["รายจ่ายอื่นรวม", `${money(r.otherExpenseTotal)} บาท`],
+    ["รายจ่ายที่หักเงินสด", `${money(expenseCash)} บาท`],
+    ["เอาเงินสดให้เจ้าของ", `${money(r.ownerCashOut)} บาท`, true],
+    ["เงินสดขาด/เกิน", `${money(r.cashDiff)} บาท`, true]
+  ];
+  const cupRows = [
+    ["แก้วคงเหลือวันก่อน", `${money(r.prevCupRemain)} ใบ`],
+    ["แก้วเพิ่มวันนี้", `${money(r.cupsAdded)} ใบ`],
+    ["แก้วคงเหลือวันนี้", `${money(r.cupsRemain)} ใบ`],
+    ["แก้วที่ใช้จริง", `${money(r.cupsUsed)} ใบ`, true]
+  ];
+  const expensesHtml = expenses.length
+    ? `<div class="expense-detail-grid">${expenses.map(e=>`<div class="expense-detail-item"><div><b>${escapeHtml(e.name||e.detail||"รายจ่ายอื่น")}</b><span>${money(e.amount)} บาท</span></div><small>${e.paidByTransfer?"โอนจ่าย — ไม่หักเงินสด":"เงินสด — หักเงินสด"}${e.note?` · ${escapeHtml(e.note)}`:""}</small></div>`).join("")}</div>`
+    : `<div class="empty compact">ไม่มีรายจ่ายอื่น</div>`;
   return `<div class="monthly-detail-card">
     <div class="monthly-detail-toolbar"><b>รายละเอียด ${thaiDate(r.date)}</b><button type="button" class="btn ghost small monthly-detail-close">ปิด/ซ่อนรายละเอียด</button></div>
-    <div class="grid two">
-      <div class="detail-section sales-detail-section">
-        <h4>ยอดขาย</h4>
-        <dl class="detail-list">
-          <div><dt>พนักงานในกะ</dt><dd>${(r.workerNames||[]).map(escapeHtml).join(", ") || "-"}</dd></div>
-          <div><dt>ยอดขายก่อนส่วนลด</dt><dd>${money(r.grossSales)} บาท</dd></div>
-          <div><dt>ส่วนลด</dt><dd>${money(r.discount)} บาท</dd></div>
-          <div><dt>รายได้รวม</dt><dd>${money(r.netSales)} บาท</dd></div>
-          <div><dt>เงินสด</dt><dd>${money(r.cashSales)} บาท</dd></div>
-          <div><dt>เงินโอน</dt><dd>${money(r.transferSales)} บาท</dd></div>
-          <div><dt>Line Man</dt><dd>${money(r.lineMan)} บาท</dd></div>
-          <div><dt>Grab</dt><dd>${money(r.grab)} บาท</dd></div>
-          <div><dt><b>รายได้รวมทั้งหมด</b></dt><dd><b>${money(r.totalAll)} บาท</b></dd></div>
-        </dl>
+    <div class="monthly-detail-scroll" role="region" aria-label="รายละเอียดยอดขายรายวัน" tabindex="0">
+      <div class="monthly-detail-two-tables">
+        <section class="detail-section detail-sales-section">
+          <h4>🧾 ตารางรายละเอียดยอดขาย</h4>
+          <table class="detail-compact-table"><tbody>${detailRows(salesRows)}</tbody></table>
+        </section>
+        <section class="detail-section detail-cash-section">
+          <h4>💵 ตารางเงินสด / รายจ่าย</h4>
+          <table class="detail-compact-table"><tbody>${detailRows(cashRows)}</tbody></table>
+        </section>
       </div>
-      <div class="detail-section cash-detail-section">
-        <h4>เงินสด / รายจ่าย</h4>
-        <dl class="detail-list">
-          <div><dt>เงินสดเปิดกะ</dt><dd>${money(r.cashOpen)} บาท</dd></div>
-          <div><dt>เงินสดปิดกะ</dt><dd>${money(r.cashClose)} บาท</dd></div>
-          <div><dt>ค่านมรวม</dt><dd>${money(r.milkCost)} บาท</dd></div>
-          <div><dt>นมวัว</dt><dd>${money(r.cowMilkCost ?? r.milkCost)} บาท ${r.cowMilkPaidTransfer?"(โอนจ่าย)":""}</dd></div>
-          <div><dt>นมโอ๊ต</dt><dd>${money(r.oatMilkCost)} บาท ${r.oatMilkPaidTransfer?"(โอนจ่าย)":""}</dd></div>
-          <div><dt>ค่านมที่หักเงินสด</dt><dd>${money(milkCash)} บาท</dd></div>
-          <div><dt>รายจ่ายอื่นรวม</dt><dd>${money(r.otherExpenseTotal)} บาท</dd></div>
-          <div><dt>รายจ่ายที่หักเงินสด</dt><dd>${money(expenseCash)} บาท</dd></div>
-          <div><dt>เอาเงินสดให้เจ้าของ</dt><dd>${money(r.ownerCashOut)} บาท</dd></div>
-          <div><dt>เงินสดขาด/เกิน</dt><dd>${money(r.cashDiff)} บาท</dd></div>
-        </dl>
-      </div>
+      <section class="detail-section detail-expense-section"><h4>🧾 รายการรายจ่ายอื่น</h4>${expensesHtml}</section>
+      <section class="detail-section detail-cup-section"><h4>🥤 ข้อมูลแก้ว / หมายเหตุ</h4><table class="detail-compact-table"><tbody>${detailRows(cupRows)}<tr><th>หมายเหตุแก้ว</th><td>${escapeHtml(r.cupNote||"-")}</td></tr><tr><th>หมายเหตุประจำวัน</th><td>${escapeHtml(r.note||"-")}</td></tr></tbody></table></section>
     </div>
-    <div class="detail-section expense-detail-section" style="margin-top:10px"><h4>รายการรายจ่ายอื่น</h4>${expensesHtml}</div>
   </div>`;
 }
 function bindMonthlyDetailButtons(){
@@ -1972,7 +1984,7 @@ async function testBackupUrl(){
   if(!url) return showToast("กรุณากรอก URL ก่อน");
   const testUrl = `${url}${url.includes("?") ? "&" : "?"}action=test&source=love_matcha_sales_app&ts=${Date.now()}`;
   window.open(testUrl, "_blank", "noopener,noreferrer");
-  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.3.5 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
+  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.3.6 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
 }
 async function exportAllSalesCsv(){
   const snap = await getDocs(collection(appState.db, "dailySales"));
@@ -1985,7 +1997,7 @@ async function handleRestoreFile(){
   const lower = file.name.toLowerCase();
   if(!lower.endsWith(".json")){
     appState.restorePreview = null;
-    $("#restorePreview").innerHTML = `<div class="state error">v1.3.5 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
+    $("#restorePreview").innerHTML = `<div class="state error">v1.3.6 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
     $("#restoreBtn").disabled = true;
     return;
   }

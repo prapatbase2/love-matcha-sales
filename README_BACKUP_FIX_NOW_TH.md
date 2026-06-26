@@ -21,9 +21,9 @@
 
 หน้าใหม่ต้องขึ้นประมาณนี้:
 
-- `app`: `Love Matcha Sales Backup v1.3.5`
+- `app`: `Love Matcha Sales Backup v1.3.6`
 - มี `jsonFileName`
-- ไม่มี `sheetName` เพราะ v1.3.5 ยกเลิก Google Sheet/Excel แล้ว
+- ไม่มี `sheetName` เพราะ v1.3.6 ยกเลิก Google Sheet/Excel แล้ว
 - มี `folderUrl`
 
 ถ้ายังขึ้น v1.2 คือยัง Deploy ไม่สำเร็จ หรือเปิด Apps Script คนละตัว

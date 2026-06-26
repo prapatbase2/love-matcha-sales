@@ -288,95 +288,105 @@ body.is-offline #pageContent textarea{
   .comp-filter-panel .grid.three,.compact-panel .grid.three{grid-template-columns:1fr}
 }
 
-
-/* v1.3.5: หน้ายอดขายสีชัดขึ้น + มือถือจอแคบกรอกสั้นลง */
-.daily-panel{border-color:#cfdac8;box-shadow:0 5px 18px rgba(24,42,16,.075)}
-.daily-panel-head{background:linear-gradient(135deg,#ffffff,#eaf4df)}
-.daily-section{border-color:#c9d7bf}
+/* v1.3.6: หน้ายอดขายสีชัดขึ้น + มือถือจอแคบใช้ 2 ช่องต่อบรรทัด */
+.daily-panel{box-shadow:0 8px 22px rgba(24,42,16,.075)}
+.daily-section{border-color:#cfdcc6}
 .daily-section::before{height:6px}
-.staff-section{background:#eef8e8}
-.staff-section::before{background:#aed79b}
-.sales-section{background:#eaf4ff}
-.sales-section::before{background:#a9d0f3}
-.cash-section{background:#fff1d8}
-.cash-section::before{background:#f2bf62}
-.cup-section{background:#e7f8f2}
-.cup-section::before{background:#82d6bc}
-.ot-section{background:#fff0f7}
-.ot-section::before{background:#f5a9cb}
-.note-section{background:#f2f4f1}
-.note-section::before{background:#c7cec3}
-.daily-section .field{gap:4px;min-width:0}
-.daily-section .field label{line-height:1.25}
-.daily-section input,.daily-section select,.daily-section textarea{min-width:0}
-.expense-row{background:rgba(255,255,255,.72);border-color:#cbd8c3}
-.inline-check{line-height:1.25}
-
-/* v1.3.5: รายละเอียดรายเดือนใช้สีเดียวกับหน้ายอดขาย และวางคู่ซ้าย/ขวา */
-.monthly-detail-card{background:#f3f7ef;border:1px solid #cfdac8;border-radius:18px;padding:10px}
-.monthly-detail-card > .grid.two{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px}
-.monthly-detail-card .detail-section{box-shadow:0 3px 12px rgba(24,42,16,.045)}
-.sales-detail-section{background:#eaf4ff;border-color:#b9d6ef}
-.cash-detail-section{background:#fff1d8;border-color:#e7c47b}
-.expense-detail-section{background:#eef8e8;border-color:#c1d9b7}
-.detail-mini-list{grid-template-columns:repeat(2,minmax(0,1fr))}
-.detail-mini-item{background:rgba(255,255,255,.78);min-width:0}
-.monthly-detail-toolbar{background:#e3efd9;border:1px solid #c3d8b7}
-.detail-section h4{font-size:1rem;margin-bottom:7px}
-.detail-list div{gap:8px}
-.detail-list dd{white-space:normal;word-break:break-word}
-
-@media(max-width:680px){
-  .daily-form-wide{max-width:100%}
-  .daily-section{padding:12px 10px;margin:9px 0;border-radius:17px}
-  .daily-section h3{font-size:1rem;margin-bottom:8px}
-  .daily-section .grid.three,
-  .daily-section .expense-row.grid.three,
-  .dessert-row .grid.three{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}
-  .daily-section .field label{font-size:.84rem;letter-spacing:-.01em}
-  .daily-section input,.daily-section select{padding:9px 8px;border-radius:12px;min-height:40px;font-size:.95rem}
-  .daily-section textarea{padding:10px;border-radius:12px;min-height:78px}
-  .sales-section .grid.three .field:nth-child(6),
-  .cash-section > .grid.three + .divider + .flex + #expensesBox + .field,
-  .cup-section .grid.three .field:nth-child(5),
-  .expense-row .field:nth-child(3),
-  .dessert-row .field:nth-child(3),
-  .note-section .field{grid-column:1 / -1}
-  .expense-row{display:grid!important;padding:9px;margin-bottom:8px;border-radius:14px}
-  .expense-row .field{margin-bottom:0!important}
-  .expense-row .flex{gap:6px}
-  .expense-row .flex input{flex:1 1 120px;min-width:0}
-  .inline-check{font-size:.76rem;margin-top:4px;gap:5px}
-  .inline-check input{transform:scale(1.05)}
-  .pay-field{gap:4px}
-  .check-list{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:7px}
-  .check-item{padding:8px;border-radius:13px;font-size:.9rem;line-height:1.25}
-  .check-item input{transform:scale(1.08)}
-  .sticky-save.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px}
-  .sticky-save .btn{font-size:.86rem;padding:11px 8px;line-height:1.2}
-
-  .monthly-detail-card{padding:8px;border-radius:16px;min-width:0}
-  .monthly-detail-card > .grid.two{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:7px!important}
-  .monthly-detail-card .detail-section{padding:8px;border-radius:13px;min-width:0}
-  .monthly-detail-card .detail-section h4{font-size:.92rem;margin-bottom:6px}
-  .monthly-detail-card .detail-list{gap:5px}
-  .monthly-detail-card .detail-list div{grid-template-columns:minmax(0,1fr);gap:2px;padding-bottom:5px}
-  .monthly-detail-card .detail-list dt{font-size:.76rem;line-height:1.2}
-  .monthly-detail-card .detail-list dd{text-align:left;font-size:.9rem;line-height:1.2;font-weight:850}
-  .detail-mini-list{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:7px}
-  .detail-mini-item{padding:8px;border-radius:12px}
-  .detail-mini-item b,.detail-mini-item span{font-size:.86rem;line-height:1.15}
-  .detail-mini-item span{text-align:left}
-  .detail-mini-item small{font-size:.72rem;line-height:1.15}
-  .monthly-detail-toolbar{position:static!important;padding:8px;border-radius:13px;margin-bottom:8px;display:grid;grid-template-columns:1fr auto;align-items:center}
-  .monthly-detail-toolbar .btn{width:auto!important;white-space:nowrap;padding:7px 8px;font-size:.78rem}
+.daily-section h3{font-size:1.08rem}
+.staff-section{background:#edf8e5;border-color:#c9e6bd}
+.staff-section::before{background:#9ccd82}
+.sales-section{background:#e6f2ff;border-color:#bdd8f2}
+.sales-section::before{background:#86bdf0}
+.cash-section{background:#fff1d2;border-color:#efd18d}
+.cash-section::before{background:#dfa93b}
+.cup-section{background:#e8fbf3;border-color:#b9e3d0}
+.cup-section::before{background:#75cfa5}
+.ot-section{background:#ffeaf4;border-color:#edc2d7}
+.ot-section::before{background:#de89b2}
+.note-section{background:#f1f3f0;border-color:#d4dbd0}
+.note-section::before{background:#aeb9a7}
+.daily-form-wide input,
+.daily-form-wide select,
+.daily-form-wide textarea{padding:9px 10px;border-radius:12px;min-height:40px}
+.daily-form-wide textarea{min-height:74px}
+.daily-form-wide .field{gap:4px;min-width:0}
+.daily-form-wide .field label{line-height:1.22}
+.daily-form-wide .panel{margin:10px 0}
+.daily-form-wide .inline-check{font-size:.82rem;line-height:1.18;margin-top:4px}
+.daily-form-wide .check-item{padding:8px;border-radius:12px}
+.daily-form-wide .expense-row{background:rgba(255,255,255,.9);border-color:#c9d7c0}
+.daily-form-wide .sticky-save.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:720px){
+  .daily-form-wide .grid.three,
+  .daily-form-wide .grid.two,
+  .daily-form-wide .daily-panel-head .grid.three,
+  .daily-form-wide .sales-section .grid.three,
+  .daily-form-wide .cash-section .grid.three,
+  .daily-form-wide .cup-section .grid.three,
+  .daily-form-wide .ot-section .grid.three,
+  .daily-form-wide .dessert-row .grid.three,
+  .daily-form-wide .expense-row.grid.three,
+  .daily-form-wide .sticky-save.grid.two{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .daily-form-wide .check-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .daily-form-wide .field label{font-size:.82rem}
+  .daily-form-wide input,
+  .daily-form-wide select,
+  .daily-form-wide textarea{font-size:.95rem;padding:8px 8px;min-height:38px}
+  .daily-form-wide .daily-section{padding:12px 10px;margin:8px 0;border-radius:16px}
+  .daily-form-wide .daily-section h3{font-size:1rem;margin-bottom:8px}
+  .daily-form-wide .expense-row{display:grid;padding:8px;margin-bottom:7px}
+  .daily-form-wide .expense-row .field{margin-bottom:0}
+  .daily-form-wide .expense-row .field:nth-child(3){grid-column:1 / -1}
+  .daily-form-wide .pay-field .inline-check{font-size:.76rem}
+  .daily-form-wide .state{padding:9px;border-radius:13px}
+  .daily-form-wide .btn{padding:10px 10px;border-radius:12px}
+  .daily-control-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
+@media(max-width:340px){
+  .daily-form-wide .field label{font-size:.78rem}
+  .daily-form-wide input,
+  .daily-form-wide select{font-size:.9rem;padding-left:7px;padding-right:7px}
 }
 
-@media(max-width:360px){
-  .daily-section .field label{font-size:.78rem}
-  .daily-section input,.daily-section select{font-size:.9rem;padding:8px 7px}
-  .check-item{font-size:.82rem;padding:7px}
-  .monthly-detail-card .detail-list dt{font-size:.72rem}
-  .monthly-detail-card .detail-list dd{font-size:.84rem}
-  .detail-mini-item b,.detail-mini-item span{font-size:.8rem}
+/* v1.3.6: รายละเอียดรายเดือนเป็นตารางคู่ซ้าย/ขวา เลื่อนซ้ายขวาได้ ไม่เรียงยาว */
+.monthly-detail-row td{background:#eef6e8}
+.monthly-detail-cell{background:#eef6e8!important}
+.monthly-detail-card{padding:6px 0}
+.monthly-detail-scroll{overflow-x:auto;overflow-y:visible;padding-bottom:6px;scrollbar-width:thin}
+.monthly-detail-two-tables{display:grid;grid-template-columns:minmax(330px,1fr) minmax(330px,1fr);gap:10px;min-width:700px;align-items:start}
+.detail-sales-section{background:#e6f2ff;border-color:#bdd8f2}
+.detail-cash-section{background:#fff1d2;border-color:#efd18d}
+.detail-expense-section{background:#fff1d2;border-color:#efd18d;margin-top:10px;min-width:700px}
+.detail-cup-section{background:#e8fbf3;border-color:#b9e3d0;margin-top:10px;min-width:700px}
+table.detail-compact-table{min-width:0!important;width:100%;border-collapse:separate;border-spacing:0;background:rgba(255,255,255,.78);border:1px solid rgba(0,0,0,.06);border-radius:12px;overflow:hidden}
+.detail-compact-table th,
+.detail-compact-table td{position:static!important;top:auto!important;z-index:auto!important;padding:8px 9px;border-bottom:1px solid rgba(0,0,0,.07);vertical-align:top;white-space:normal}
+.detail-compact-table th{width:48%;background:rgba(255,255,255,.62);color:#334329;font-weight:900;text-align:left}
+.detail-compact-table td{text-align:right;font-weight:800;word-break:break-word}
+.detail-compact-table tr:last-child th,
+.detail-compact-table tr:last-child td{border-bottom:0}
+.detail-compact-table .strong-row th,
+.detail-compact-table .strong-row td{background:rgba(67,107,42,.10);color:var(--primary-dark);font-weight:950}
+.expense-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:8px;min-width:660px}
+.expense-detail-item{background:rgba(255,255,255,.82);border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:9px;display:grid;gap:4px}
+.expense-detail-item>div{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.expense-detail-item b{color:var(--primary-dark);word-break:break-word}
+.expense-detail-item span{font-weight:950;white-space:nowrap;text-align:right}
+.expense-detail-item small{color:var(--muted);font-weight:750}
+@media(max-width:680px){
+  .monthly-detail-toolbar{position:sticky;top:74px;z-index:2;flex-direction:row;align-items:center;background:#dcefd0;border:1px solid #c1ddb2}
+  .monthly-detail-toolbar .btn{width:auto;white-space:nowrap}
+  .monthly-detail-scroll{margin:0 -2px;padding-bottom:8px}
+  .monthly-detail-two-tables{min-width:700px}
+  .detail-expense-section,.detail-cup-section{min-width:700px}
+  .detail-compact-table th,.detail-compact-table td{padding:8px;font-size:.92rem}
+  .expense-detail-grid{min-width:660px}
+}
+
+
+/* v1.3.6: กัน CSS มือถือเดิมแปลงแถวรายละเอียดรายเดือนเป็นการ์ด ทำให้ตารางคู่เลื่อนซ้าย/ขวาได้ถูกต้อง */
+@media(max-width:680px){
+  .monthly-simple-table tr.monthly-detail-row{display:table-row!important;border:0!important;background:#eef6e8!important;padding:0!important;box-shadow:none!important;margin:0!important}
+  .monthly-simple-table tr.monthly-detail-row.hidden{display:none!important}
+  .monthly-simple-table .monthly-detail-cell{display:table-cell!important;padding:8px!important;border-bottom:1px solid var(--line)!important;background:#eef6e8!important;text-align:left!important}
 }
