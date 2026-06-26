@@ -289,96 +289,94 @@ body.is-offline #pageContent textarea{
 }
 
 
-/* v1.3.5: หน้ายอดขายสีชัดขึ้น + มือถือจอแคบสั้นลง */
-.daily-section{border:1px solid #d3dccb;box-shadow:0 5px 16px rgba(24,42,16,.055)}
-.daily-panel-head{background:linear-gradient(135deg,#ffffff,#eef6e7);border-color:#d1dfc8}
-.staff-section{background:#edf7e4}
-.staff-section::before{background:#b8dca3}
-.sales-section{background:#e8f2ff}
-.sales-section::before{background:#a9d0ff}
-.cash-section{background:#fff0d6}
-.cash-section::before{background:#ffc86a}
-.cup-section{background:#e5f8ef}
-.cup-section::before{background:#8eddbc}
-.ot-section{background:#ffe8f3}
-.ot-section::before{background:#ffaad0}
-.note-section{background:#f0f2ed}
-.note-section::before{background:#d2d7cc}
-.expense-row{background:rgba(255,255,255,.9);border-color:#d0dac7}
+/* v1.3.5: หน้ายอดขายสีชัดขึ้น + มือถือจอแคบกรอกสั้นลง */
+.daily-panel{border-color:#cfdac8;box-shadow:0 5px 18px rgba(24,42,16,.075)}
+.daily-panel-head{background:linear-gradient(135deg,#ffffff,#eaf4df)}
+.daily-section{border-color:#c9d7bf}
+.daily-section::before{height:6px}
+.staff-section{background:#eef8e8}
+.staff-section::before{background:#aed79b}
+.sales-section{background:#eaf4ff}
+.sales-section::before{background:#a9d0f3}
+.cash-section{background:#fff1d8}
+.cash-section::before{background:#f2bf62}
+.cup-section{background:#e7f8f2}
+.cup-section::before{background:#82d6bc}
+.ot-section{background:#fff0f7}
+.ot-section::before{background:#f5a9cb}
+.note-section{background:#f2f4f1}
+.note-section::before{background:#c7cec3}
+.daily-section .field{gap:4px;min-width:0}
+.daily-section .field label{line-height:1.25}
+.daily-section input,.daily-section select,.daily-section textarea{min-width:0}
+.expense-row{background:rgba(255,255,255,.72);border-color:#cbd8c3}
+.inline-check{line-height:1.25}
 
-/* v1.3.5: รายละเอียดรายเดือนจัดเป็นตารางคู่ซ้าย/ขวา สีเดียวกับหน้ายอดขาย */
-.monthly-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:start}
-.monthly-detail-card .detail-section{position:relative;overflow:hidden;border-color:#d3dccb;box-shadow:0 3px 12px rgba(24,42,16,.045)}
-.monthly-detail-card .detail-section::before{content:"";position:absolute;inset:0 0 auto 0;height:5px;background:var(--secondary)}
-.monthly-detail-card .detail-section h4{padding-top:2px}
-.detail-sales-section{background:#e8f2ff}
-.detail-sales-section::before{background:#a9d0ff!important}
-.detail-cash-section,.detail-expense-section{background:#fff0d6}
-.detail-cash-section::before,.detail-expense-section::before{background:#ffc86a!important}
-.detail-table{width:100%;min-width:0;border-collapse:separate;border-spacing:0;font-size:.94rem;background:transparent}
-.detail-table th,.detail-table td{position:static;z-index:auto;background:transparent;border:0;border-bottom:1px dashed rgba(67,107,42,.22);padding:7px 0;vertical-align:top}
-.detail-table tr:last-child th,.detail-table tr:last-child td{border-bottom:0}
-.detail-table th{width:52%;color:#334329;font-weight:850;text-align:left;white-space:normal}
-.detail-table td{text-align:right;font-weight:900;color:#17210f;word-break:break-word}
-.detail-table .detail-total th,.detail-table .detail-total td{color:var(--primary-dark);font-size:1.02em}
-.detail-expense-section{margin-top:10px}
-.detail-expense-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.detail-expense-item{border:1px solid #d3dccb;border-radius:13px;padding:9px;background:rgba(255,255,255,.86);display:grid;gap:3px;min-width:0}
-.detail-expense-item b{color:var(--primary-dark);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.detail-expense-item span{font-weight:950;text-align:right;color:#17210f}
-.detail-expense-item small{color:var(--muted);font-size:.82rem;line-height:1.25}
+/* v1.3.5: รายละเอียดรายเดือนใช้สีเดียวกับหน้ายอดขาย และวางคู่ซ้าย/ขวา */
+.monthly-detail-card{background:#f3f7ef;border:1px solid #cfdac8;border-radius:18px;padding:10px}
+.monthly-detail-card > .grid.two{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px}
+.monthly-detail-card .detail-section{box-shadow:0 3px 12px rgba(24,42,16,.045)}
+.sales-detail-section{background:#eaf4ff;border-color:#b9d6ef}
+.cash-detail-section{background:#fff1d8;border-color:#e7c47b}
+.expense-detail-section{background:#eef8e8;border-color:#c1d9b7}
+.detail-mini-list{grid-template-columns:repeat(2,minmax(0,1fr))}
+.detail-mini-item{background:rgba(255,255,255,.78);min-width:0}
+.monthly-detail-toolbar{background:#e3efd9;border:1px solid #c3d8b7}
+.detail-section h4{font-size:1rem;margin-bottom:7px}
+.detail-list div{gap:8px}
+.detail-list dd{white-space:normal;word-break:break-word}
 
 @media(max-width:680px){
-  .daily-form-wide{max-width:100%;}
-  .daily-form-wide .daily-panel-head{position:static!important;top:auto!important;z-index:auto!important;}
-  .daily-form-wide .daily-section{padding:10px 9px;margin:8px 0;border-radius:15px;}
-  .daily-form-wide .daily-section h3{font-size:1rem;margin-bottom:8px;line-height:1.25;}
-  .daily-form-wide .daily-section .grid.three{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
-  .daily-form-wide .field{gap:4px;min-width:0;}
-  .daily-form-wide .field label{font-size:.86rem;line-height:1.18;}
-  .daily-form-wide .field small{font-size:.74rem;line-height:1.2;}
-  .daily-form-wide input,.daily-form-wide select,.daily-form-wide textarea{padding:8px 8px;min-height:38px;border-radius:11px;font-size:.95rem;}
-  .daily-form-wide input[type="checkbox"]{width:auto;min-height:auto;padding:0;border-radius:4px;}
-  .daily-form-wide textarea{min-height:74px;}
-  .daily-form-wide .inline-check{font-size:.76rem;gap:5px;margin-top:4px;line-height:1.15;}
-  .daily-form-wide .inline-check input{transform:scale(1.02);}
-  .daily-form-wide .wide-mobile{grid-column:1/-1;}
-  .daily-form-wide .check-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;}
-  .daily-form-wide .check-item{padding:8px;border-radius:12px;font-size:.86rem;line-height:1.18;}
-  .daily-form-wide .check-item input{transform:scale(1.05);}
-  .expense-row{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px;padding:8px;margin-bottom:8px;border-radius:14px;}
-  .expense-row .field{margin-bottom:0!important;}
-  .expense-row .field:nth-child(3){grid-column:1/-1;}
-  .expense-row .flex{gap:6px;flex-wrap:nowrap;}
-  .expense-row .flex input{min-width:0;}
-  .expense-row .remove-row{white-space:nowrap;padding-left:9px;padding-right:9px;}
-  .dessert-row{padding:10px!important;border-radius:14px!important;}
-  .dessert-row .grid.three{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
-  .dessert-row .grid.three .field:nth-child(3){grid-column:1/-1;}
-  .sticky-save{bottom:82px;padding:8px;}
-  .sticky-save.grid.two{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
-  .sticky-save .btn{padding:10px 8px;border-radius:12px;font-size:.88rem;}
-  .monthly-detail-toolbar{position:static!important;top:auto!important;z-index:auto!important;display:grid;grid-template-columns:1fr auto;align-items:center;padding:8px;margin-bottom:8px;}
-  .monthly-detail-toolbar .btn{width:auto!important;white-space:nowrap;padding:7px 9px;}
-  .monthly-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;}
-  .monthly-detail-card .detail-section{padding:9px;border-radius:13px;}
-  .monthly-detail-card .detail-section h4{font-size:.9rem;margin-bottom:5px;line-height:1.2;}
-  .detail-table{font-size:.76rem;line-height:1.18;}
-  .detail-table th,.detail-table td{display:block;width:100%;padding:3px 0;border-bottom:0;text-align:left;}
-  .detail-table td{font-size:.92rem;margin-bottom:4px;text-align:right;border-bottom:1px dashed rgba(67,107,42,.18);}
-  .detail-table tr:last-child td{border-bottom:0;margin-bottom:0;}
-  .detail-expense-section{margin-top:8px;}
-  .detail-expense-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;}
-  .detail-expense-item{padding:7px;border-radius:12px;}
-  .detail-expense-item b{font-size:.78rem;}
-  .detail-expense-item span{font-size:.9rem;}
-  .detail-expense-item small{font-size:.72rem;}
+  .daily-form-wide{max-width:100%}
+  .daily-section{padding:12px 10px;margin:9px 0;border-radius:17px}
+  .daily-section h3{font-size:1rem;margin-bottom:8px}
+  .daily-section .grid.three,
+  .daily-section .expense-row.grid.three,
+  .dessert-row .grid.three{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}
+  .daily-section .field label{font-size:.84rem;letter-spacing:-.01em}
+  .daily-section input,.daily-section select{padding:9px 8px;border-radius:12px;min-height:40px;font-size:.95rem}
+  .daily-section textarea{padding:10px;border-radius:12px;min-height:78px}
+  .sales-section .grid.three .field:nth-child(6),
+  .cash-section > .grid.three + .divider + .flex + #expensesBox + .field,
+  .cup-section .grid.three .field:nth-child(5),
+  .expense-row .field:nth-child(3),
+  .dessert-row .field:nth-child(3),
+  .note-section .field{grid-column:1 / -1}
+  .expense-row{display:grid!important;padding:9px;margin-bottom:8px;border-radius:14px}
+  .expense-row .field{margin-bottom:0!important}
+  .expense-row .flex{gap:6px}
+  .expense-row .flex input{flex:1 1 120px;min-width:0}
+  .inline-check{font-size:.76rem;margin-top:4px;gap:5px}
+  .inline-check input{transform:scale(1.05)}
+  .pay-field{gap:4px}
+  .check-list{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:7px}
+  .check-item{padding:8px;border-radius:13px;font-size:.9rem;line-height:1.25}
+  .check-item input{transform:scale(1.08)}
+  .sticky-save.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px}
+  .sticky-save .btn{font-size:.86rem;padding:11px 8px;line-height:1.2}
+
+  .monthly-detail-card{padding:8px;border-radius:16px;min-width:0}
+  .monthly-detail-card > .grid.two{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:7px!important}
+  .monthly-detail-card .detail-section{padding:8px;border-radius:13px;min-width:0}
+  .monthly-detail-card .detail-section h4{font-size:.92rem;margin-bottom:6px}
+  .monthly-detail-card .detail-list{gap:5px}
+  .monthly-detail-card .detail-list div{grid-template-columns:minmax(0,1fr);gap:2px;padding-bottom:5px}
+  .monthly-detail-card .detail-list dt{font-size:.76rem;line-height:1.2}
+  .monthly-detail-card .detail-list dd{text-align:left;font-size:.9rem;line-height:1.2;font-weight:850}
+  .detail-mini-list{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:7px}
+  .detail-mini-item{padding:8px;border-radius:12px}
+  .detail-mini-item b,.detail-mini-item span{font-size:.86rem;line-height:1.15}
+  .detail-mini-item span{text-align:left}
+  .detail-mini-item small{font-size:.72rem;line-height:1.15}
+  .monthly-detail-toolbar{position:static!important;padding:8px;border-radius:13px;margin-bottom:8px;display:grid;grid-template-columns:1fr auto;align-items:center}
+  .monthly-detail-toolbar .btn{width:auto!important;white-space:nowrap;padding:7px 8px;font-size:.78rem}
 }
-@media(max-width:340px){
-  .daily-form-wide .field label{font-size:.8rem;}
-  .daily-form-wide input,.daily-form-wide select,.daily-form-wide textarea{font-size:.9rem;padding:7px 7px;}
-  .monthly-detail-grid,.detail-expense-grid{gap:5px;}
-  .monthly-detail-card .detail-section{padding:7px;}
-  .detail-table{font-size:.7rem;}
-  .detail-table td{font-size:.84rem;}
+
+@media(max-width:360px){
+  .daily-section .field label{font-size:.78rem}
+  .daily-section input,.daily-section select{font-size:.9rem;padding:8px 7px}
+  .check-item{font-size:.82rem;padding:7px}
+  .monthly-detail-card .detail-list dt{font-size:.72rem}
+  .monthly-detail-card .detail-list dd{font-size:.84rem}
+  .detail-mini-item b,.detail-mini-item span{font-size:.8rem}
 }
