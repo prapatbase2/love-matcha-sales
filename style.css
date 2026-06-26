@@ -379,3 +379,104 @@ body.is-offline #pageContent textarea{
   .detail-table-card{min-width:260px}
   .detail-expense-grid{grid-template-columns:1fr}
 }
+
+
+/* v1.3.6: หน้ารายเดือน - กดแสดงรายละเอียดแล้วตารางหลักต้องไม่ถูกดันกว้างขึ้น */
+.monthly-simple-wrap{
+  width:100%;
+  max-width:100%;
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior-x:contain;
+}
+.monthly-simple-table{
+  width:100%;
+  min-width:660px;
+  table-layout:fixed;
+  border-collapse:collapse;
+}
+.monthly-simple-table .monthly-date-col{width:14%}
+.monthly-simple-table .monthly-worker-col{width:24%}
+.monthly-simple-table .monthly-money-col{width:17%}
+.monthly-simple-table .monthly-action-col{width:11%}
+.monthly-simple-table th,
+.monthly-simple-table td{
+  overflow-wrap:break-word;
+  word-break:normal;
+  vertical-align:middle;
+}
+.monthly-simple-table th{
+  white-space:normal!important;
+  line-height:1.25;
+}
+.monthly-simple-table td[data-label="ชื่อพนักงานในกะ"]{
+  white-space:normal!important;
+  line-height:1.3;
+}
+.monthly-simple-table td.money,
+.monthly-simple-table .money,
+.monthly-simple-table .money-value{
+  white-space:nowrap!important;
+  overflow-wrap:normal;
+  word-break:normal;
+}
+.monthly-simple-table .monthly-detail-row{
+  display:table-row!important;
+}
+.monthly-simple-table .monthly-detail-row.hidden{
+  display:none!important;
+}
+.monthly-simple-table .monthly-detail-cell{
+  display:table-cell!important;
+  width:auto!important;
+  max-width:none!important;
+  overflow:hidden!important;
+  white-space:normal!important;
+}
+.monthly-detail-cell::before{
+  content:none!important;
+  display:none!important;
+}
+.monthly-detail-card{
+  width:100%;
+  max-width:100%;
+  overflow:hidden;
+}
+.monthly-detail-scroll{
+  width:100%;
+  max-width:100%;
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior-x:contain;
+}
+.monthly-detail-columns{
+  width:max-content;
+  max-width:none;
+  min-width:100%;
+}
+.detail-table-card{
+  width:clamp(270px, 32vw, 370px);
+  flex:0 0 auto;
+}
+@media(max-width:720px){
+  .monthly-simple-wrap{max-width:100vw}
+  .monthly-simple-table{min-width:640px}
+  .monthly-simple-table th,
+  .monthly-simple-table td{font-size:.9rem;padding:8px 7px}
+  .monthly-simple-table .monthly-date-col{width:15%}
+  .monthly-simple-table .monthly-worker-col{width:23%}
+  .monthly-simple-table .monthly-money-col{width:17%}
+  .monthly-simple-table .monthly-action-col{width:11%}
+  .monthly-simple-table .btn.small{padding:7px 8px;white-space:normal;line-height:1.15}
+  .monthly-simple-table .monthly-detail-row{display:table-row!important}
+  .monthly-simple-table .monthly-detail-row.hidden{display:none!important}
+  .monthly-simple-table .monthly-detail-cell{display:table-cell!important;padding:8px!important;border-bottom:1px solid var(--line)!important}
+  .detail-table-card{width:280px;min-width:280px;max-width:280px}
+}
+@media(max-width:380px){
+  .monthly-simple-table{min-width:620px}
+  .monthly-simple-table th,
+  .monthly-simple-table td{font-size:.84rem;padding:7px 6px}
+  .monthly-simple-table .btn.small{font-size:.82rem;padding:6px 6px}
+  .detail-table-card{width:270px;min-width:270px;max-width:270px}
+}

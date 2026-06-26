@@ -1,4 +1,4 @@
-const CACHE_NAME = "love-matcha-sales-v1.3.5-daily-darker-2col-monthly-detail";
+const CACHE_NAME = "love-matcha-sales-v1.3.6-monthly-fixed-detail-width";
 const APP_SHELL = [
   "./",
   "./index.html",
