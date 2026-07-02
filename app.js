@@ -6,12 +6,12 @@ import {
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const VERSION = "v1.3.6";
+const VERSION = "v1.4.0";
 const DEFAULT_BACKUP_URL = "https://script.google.com/macros/s/AKfycbz7pwTBSDwVwja4ugxvlJoNYb4ksBk7METKzGd3bCARUzea99Sx0BTAJHIDi5N2iW7e/exec";
 const COLLECTIONS = [
   "users","branches","dailySales","dailyDrafts","dailyExpenses","cupCounts","dessertOT",
   "attendance","salaryAdvances","compensationSettings","compensationRecords",
-  "appSettings","auditLogs","backupsMetadata"
+  "appSettings","auditLogs","backupsMetadata","ownerExpenses"
 ];
 const ROLE_LABELS = {
   owner:"เจ้าของ",
@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS = {
   autoBackup:{mode:"off", intervalMinutes:60, url:DEFAULT_BACKUP_URL},
   advanceAccessUserIds:[],
   dailyWorkerPay:{fullDayAmount:360, hourAmount:40, halfHourAmount:20},
+  rendoPartTimePay:{hourAmount:50},
   dailyBonus:{
     nongkhai:{enabled:false, threshold:0, amount:0},
     booth:{enabled:false, threshold:0, amount:0},
@@ -318,6 +319,7 @@ function normalizeSettings(){
   const legacyHalfHour = numberValue(s.dailyWorkerPay?.halfHourAmount || 20);
   const hourAmount = numberValue(s.dailyWorkerPay?.hourAmount || (legacyHalfHour ? legacyHalfHour * 2 : 40));
   s.dailyWorkerPay = {fullDayAmount:numberValue(s.dailyWorkerPay?.fullDayAmount || 360), hourAmount, halfHourAmount:hourAmount / 2};
+  s.rendoPartTimePay = {hourAmount:numberValue(s.rendoPartTimePay?.hourAmount || DEFAULT_SETTINGS.rendoPartTimePay.hourAmount || 50)};
   appState.settings = mergeDeep(clone(DEFAULT_SETTINGS), s);
   if(!appState.settings.autoBackup) appState.settings.autoBackup = clone(DEFAULT_SETTINGS.autoBackup);
   if(!appState.settings.autoBackup.url) appState.settings.autoBackup.url = DEFAULT_BACKUP_URL;
@@ -443,7 +445,7 @@ async function afterWrite(actionName){
   if(!appState.settings?.autoBackup) return;
   const mode = appState.settings.autoBackup.mode || "off";
   if(mode === "onAction" || mode === "both"){
-    // v1.3.6: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
+    // v1.4.0: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
     setTimeout(()=>performBackup(`auto_${actionName}`, true).catch(e=>console.warn("auto backup", e)), 0);
   }
 }
@@ -454,6 +456,7 @@ const NAV = [
   {id:"monthly", label:"รายเดือน", icon:"📅", roles:["owner","manager","supervisor","staff","daily"]},
   {id:"personal", label:"แข่งขัน", icon:"📊", roles:["owner","manager","supervisor","staff"]},
   {id:"attendance", label:"เช็คชื่อ", icon:"✅", roles:["owner","manager","supervisor","staff","daily"]},
+  {id:"ownerExpenses", label:"ลงรายจ่าย", icon:"🧾", roles:["owner","manager"]},
   {id:"advances", label:"เบิกเงิน", icon:"💸", roles:["owner","manager","supervisor","staff","daily"]},
   {id:"compensation", label:"ค่าตอบแทน", icon:"💰", roles:["owner","manager"]},
   {id:"history", label:"ประวัติ", icon:"🕘", roles:["owner","manager"]},
@@ -473,7 +476,7 @@ function navigate(page){
   $$(".nav-item").forEach(b=>b.classList.toggle("active", b.dataset.page===page));
   const renderers = {
     dashboard:renderDashboard, daily:renderDaily, monthly:renderMonthly,
-    personal:renderPersonal, attendance:renderAttendance, advances:renderAdvances,
+    personal:renderPersonal, attendance:renderAttendance, ownerExpenses:renderOwnerExpenses, advances:renderAdvances,
     compensation:renderCompensation, history:renderHistory, systemHistory:renderSystemHistory, backup:renderBackup, users:renderUsers, settings:renderSettings
   };
   (renderers[page] || renderDashboard)().catch(err=>{
@@ -528,33 +531,247 @@ function kpis(items){
   return `<div class="kpi-grid">${items.map(x=>`<div class="kpi"><small>${x.label}</small><b>${x.value}</b>${x.sub?`<div class="sub">${x.sub}</div>`:""}</div>`).join("")}</div>`;
 }
 
+function dateAddDaysISO(iso, days){
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0,10);
+}
+function yesterdayISO(){ return dateAddDaysISO(todayISO(), -1); }
+function daysInMonthKey(monthKey){
+  const [y,m] = String(monthKey || currentMonthKey()).split("-").map(Number);
+  return new Date(y, m, 0).getDate();
+}
+function monthKeysBetween(startISO, endISO){
+  const keys=[];
+  if(!startISO || !endISO) return keys;
+  let [y,m] = startISO.slice(0,7).split("-").map(Number);
+  const endKey = endISO.slice(0,7);
+  while(true){
+    const key = `${y}-${String(m).padStart(2,"0")}`;
+    keys.push(key);
+    if(key === endKey) break;
+    m += 1; if(m > 12){ m = 1; y += 1; }
+    if(keys.length > 36) break;
+  }
+  return keys;
+}
+function overlapDaysInMonth(monthKey, startISO, endISO){
+  const first = `${monthKey}-01`;
+  const last = `${monthKey}-${String(daysInMonthKey(monthKey)).padStart(2,"0")}`;
+  const a = new Date(`${startISO > first ? startISO : first}T00:00:00`);
+  const b = new Date(`${endISO < last ? endISO : last}T00:00:00`);
+  if(b < a) return 0;
+  return Math.round((b-a)/(24*60*60*1000)) + 1;
+}
+function userBranchIds(user){
+  const activeIds = activeBranches().map(b=>b.id);
+  const ids = user?.branchIds || [];
+  if(ids.includes("ALL")) return activeIds;
+  return ids.filter(id=>activeIds.includes(id));
+}
+function isNongkhaiUser(user=appState.currentUser){
+  const ids = userBranchIds(user);
+  return ids.includes("nongkhai") || user?.branchIds?.includes("ALL");
+}
+function halfHourOptions(start="18:00", end="22:00", selected=""){
+  const opts=[];
+  for(let m=minutesFromTime(start); m<=minutesFromTime(end); m+=30){
+    const t = `${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`;
+    opts.push(`<option value="${t}" ${selected===t?"selected":""}>${t}</option>`);
+  }
+  return opts.join("");
+}
+function rendoHourlyRate(){ return numberValue(appState.settings.rendoPartTimePay?.hourAmount || DEFAULT_SETTINGS.rendoPartTimePay.hourAmount || 50); }
+function calcRendoPartTimePay(r){
+  if(!r.rendoPartTime) return 0;
+  const mins = Math.max(0, minutesFromTime(r.rendoEndTime)-minutesFromTime(r.rendoStartTime));
+  return (mins / 60) * rendoHourlyRate();
+}
+function allocationBySales(amount, scope, salesByBranch, branchId="", eligibleBranchIds=null){
+  const result = {};
+  const activeIds = activeBranches().map(b=>b.id);
+  if(scope === "branch"){
+    if(branchId) result[branchId] = numberValue(amount);
+    return result;
+  }
+  const ids = (eligibleBranchIds && eligibleBranchIds.length ? eligibleBranchIds : activeIds).filter(id=>activeIds.includes(id));
+  if(!ids.length) return result;
+  const totalSales = ids.reduce((sum,id)=>sum+numberValue(salesByBranch[id]),0);
+  if(totalSales > 0){
+    ids.forEach(id=> result[id] = numberValue(amount) * numberValue(salesByBranch[id]) / totalSales);
+  }else{
+    ids.forEach(id=> result[id] = numberValue(amount) / ids.length);
+  }
+  return result;
+}
+function addToBranchMap(target, addition, factor=1){
+  Object.entries(addition || {}).forEach(([id,amount])=> target[id] = (target[id] || 0) + numberValue(amount) * factor);
+  return target;
+}
+async function getSalesForDateRange(startISO, endISO, branchIds=null){
+  const snap = await getDocs(collection(appState.db, "dailySales"));
+  let rows = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(r=>String(r.date || "") >= startISO && String(r.date || "") <= endISO);
+  if(Array.isArray(branchIds) && branchIds.length) rows = rows.filter(r=>branchIds.includes(r.branchId));
+  else rows = rows.filter(r=>isOwnerOrManager() || canSeeBranch(r.branchId));
+  return rows.sort((a,b)=>String(a.date).localeCompare(String(b.date)) || String(a.branchId).localeCompare(String(b.branchId)));
+}
+async function computeOwnerExpensesMonth(monthKey){
+  const salesRows = await getSalesForMonth(monthKey, "ALL", {allBranches:true});
+  const salesByBranch = {};
+  salesRows.filter(r=>!r.closed).forEach(r=> salesByBranch[r.branchId] = (salesByBranch[r.branchId] || 0) + numberValue(r.totalAll));
+  const byBranch = {};
+  const details = [];
+
+  const compSnap = await getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",monthKey)));
+  compSnap.docs.map(d=>({id:d.id, ...d.data()})).forEach(r=>{
+    const u = appState.users.find(x=>x.id===r.userId);
+    const ids = userBranchIds(u);
+    const amount = numberValue(r.totalCost);
+    const alloc = allocationBySales(amount, "ALL", salesByBranch, "", ids);
+    addToBranchMap(byBranch, alloc);
+    details.push({kind:"salary", name:`ค่าตอบแทน ${r.userName || userName(r.userId)}`, amount, scope:"auto", branchId:"", allocation:alloc});
+  });
+
+  const expSnap = await getDocs(collection(appState.db, "ownerExpenses"));
+  expSnap.docs.map(d=>({id:d.id, ...d.data()})).forEach(r=>{
+    const type = r.type || (r.recurring ? "recurring" : "one_time");
+    if(type === "recurring"){
+      if(r.active === false) return;
+      if(r.startMonth && r.startMonth > monthKey) return;
+      if(r.endMonth && r.endMonth < monthKey) return;
+      const alloc = allocationBySales(r.amount, r.scope || "ALL", salesByBranch, r.branchId || "");
+      addToBranchMap(byBranch, alloc);
+      details.push({...r, allocation:alloc, kind:"recurring"});
+    }else{
+      if(r.monthKey !== monthKey) return;
+      const alloc = allocationBySales(r.amount, r.scope || "branch", salesByBranch, r.branchId || "");
+      addToBranchMap(byBranch, alloc);
+      details.push({...r, allocation:alloc, kind:"one_time"});
+    }
+  });
+  const total = Object.values(byBranch).reduce((a,b)=>a+numberValue(b),0);
+  return {monthKey, salesRows, salesByBranch, byBranch, total, details};
+}
+async function computeOwnerExpensesRange(startISO, endISO){
+  const finalByBranch = {};
+  const allDetails = [];
+  for(const mk of monthKeysBetween(startISO, endISO)){
+    const month = await computeOwnerExpensesMonth(mk);
+    const ratio = overlapDaysInMonth(mk, startISO, endISO) / daysInMonthKey(mk);
+    addToBranchMap(finalByBranch, month.byBranch, ratio);
+    allDetails.push(...month.details.map(d=>({...d, monthKey:mk, prorateRatio:ratio})));
+  }
+  const total = Object.values(finalByBranch).reduce((a,b)=>a+numberValue(b),0);
+  return {byBranch:finalByBranch, total, details:allDetails};
+}
+function ownerExpenseBranchTotal(result, selectedBranchIds=null){
+  const ids = selectedBranchIds && selectedBranchIds.length ? selectedBranchIds : activeBranches().map(b=>b.id);
+  return ids.reduce((s,id)=>s+numberValue(result.byBranch?.[id]),0);
+}
+function selectedDashboardBranchIds(){
+  const checked = $$(".dash-branch-check:checked").map(x=>x.value);
+  if(!checked.length) return activeBranches().filter(b=>isOwnerOrManager() || canSeeBranch(b.id)).map(b=>b.id);
+  return checked;
+}
+
 async function renderDashboard(){
   setLoading();
   const monthKey = currentMonthKey();
-  const rows = await getSalesForMonth(monthKey, "ALL");
-  const visible = isOwnerOrManager() ? rows : rows.filter(r=>canSeeBranch(r.branchId));
-  const ag = aggregateSales(visible);
+  const first = `${monthKey}-01`;
+  const today = todayISO();
   content().innerHTML = `
-    ${pageTitle("Dashboard", `สรุปเดือน ${thaiMonth(monthKey)}`)}
+    ${pageTitle("Dashboard", "เลือกช่วงวันที่และสาขาเพื่อดูรายได้ รายจ่าย และกำไรหลังหักค่าใช้จ่าย")}
+    <div class="panel dash-filter-panel">
+      <h3>ตัวกรอง dashboard</h3>
+      <div class="grid three">
+        <div class="field"><label>โหมด</label><select id="dashMode"><option value="month">เดือนนี้</option><option value="range">กำหนดช่วงย้อนหลัง</option></select></div>
+        <div class="field"><label>ตั้งแต่วันที่</label><input id="dashStart" type="date" value="${first}"></div>
+        <div class="field"><label>ถึงวันที่</label><input id="dashEnd" type="date" value="${today}"></div>
+      </div>
+      <div class="field"><label>สาขาที่แสดง</label><div class="check-list dash-branch-list">
+        ${activeBranches().filter(b=>isOwnerOrManager() || canSeeBranch(b.id)).map(b=>`<label class="check-item"><input class="dash-branch-check" type="checkbox" value="${b.id}" checked> ${escapeHtml(b.name)}</label>`).join("")}
+      </div></div>
+      <button id="reloadDashboard" class="btn secondary write-action" type="button">แสดงผล</button>
+    </div>
+    <div id="dashboardResult"><div class="loading">กำลังคำนวณ...</div></div>`;
+  const syncMode = ()=>{
+    if($("#dashMode").value === "month"){
+      $("#dashStart").value = first;
+      $("#dashEnd").value = today;
+    }
+  };
+  $("#dashMode").onchange = syncMode;
+  $("#reloadDashboard").onclick = loadDashboardResult;
+  $$(".dash-branch-check").forEach(x=>x.onchange = loadDashboardResult);
+  await loadDashboardResult();
+}
+async function loadDashboardResult(){
+  const start = $("#dashStart").value || `${currentMonthKey()}-01`;
+  const end = $("#dashEnd").value || todayISO();
+  if(end < start) return showToast("วันที่สิ้นสุดต้องไม่น้อยกว่าวันเริ่มต้น");
+  const branchIds = selectedDashboardBranchIds();
+  const result = $("#dashboardResult");
+  result.innerHTML = `<div class="loading">กำลังคำนวณ...</div>`;
+  const rows = await getSalesForDateRange(start, end, branchIds);
+  const ag = aggregateSales(rows);
+  const salesExpense = numberValue(ag.milk) + numberValue(ag.expense);
+  const ownerExp = await computeOwnerExpensesRange(start, end);
+  const ownerExpenseTotal = ownerExpenseBranchTotal(ownerExp, branchIds);
+  const profitAfterExpense = numberValue(ag.totalAll) - salesExpense - ownerExpenseTotal;
+  const latest = rows.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)) || String(b.updatedAtISO||b.createdAtISO||"").localeCompare(String(a.updatedAtISO||a.createdAtISO||""))).slice(0,12);
+  result.innerHTML = `
     ${kpis([
-      {label:"รายได้รวมทั้งหมด", value:`${money(ag.totalAll)} บาท`},
-      {label:"จำนวนวันที่เปิดร้าน", value:`${ag.openDays} วัน`},
-      {label:"เงินสดขาด/เกินรวม", value:`${money(ag.cashDiff)} บาท`},
-      {label:"แก้วที่ใช้รวม", value:`${money(ag.cupsUsed)} ใบ`}
+      {label:"รายได้รวมทั้งช่วง", value:`${money(ag.totalAll)} บาท`, sub:`${thaiDate(start)} - ${thaiDate(end)}`},
+      {label:"รายจ่ายรวมทั้งช่วง", value:`${money(salesExpense)} บาท`, sub:"ค่านม + รายจ่ายในหน้ายอดขาย"},
+      {label:"รายจ่ายเจ้าของลง", value:`${money(ownerExpenseTotal)} บาท`, sub:"เงินเดือน/รายวัน/รายจ่ายประจำ/รายจ่ายอื่น"},
+      {label:"เอาเงินสดให้เจ้าของ", value:`${money(ag.ownerCashOut)} บาท`},
+      {label:"จำนวนแก้วที่ใช้รวม", value:`${money(ag.cupsUsed)} ใบ`},
+      {label:"รายได้หลังหักค่าใช้จ่าย", value:`${money(profitAfterExpense)} บาท`, sub:"รายได้รวม - รายจ่ายรวม - รายจ่ายเจ้าของลง"}
     ])}
     <div class="panel">
-      <div class="flex"><h3>กราฟเปรียบเทียบสาขา</h3><span class="pill muted">${isOwnerOrManager()?"รวมทุกสาขา":"เฉพาะสาขาที่มีสิทธิ์"}</span></div>
+      <div class="flex"><h3>กราฟเปรียบเทียบสาขา</h3><span class="pill muted">ตามตัวกรองที่เลือก</span></div>
       <div id="branchChartBox" class="canvas-box"><canvas id="branchChart"></canvas></div>
     </div>
     <div class="panel">
       <h3>รายการล่าสุด</h3>
-      ${salesTable(visible.slice(-10).reverse())}
+      ${salesTable(latest)}
     </div>`;
-  const labels = activeBranches().filter(b=>isOwnerOrManager() || canSeeBranch(b.id)).map(b=>b.name);
-  const values = activeBranches().filter(b=>isOwnerOrManager() || canSeeBranch(b.id)).map(b=>aggregateSales(visible.filter(r=>r.branchId===b.id)).totalAll);
+  const labels = branchIds.map(branchName);
+  const values = branchIds.map(id=>aggregateSales(rows.filter(r=>r.branchId===id)).totalAll);
   drawBar("branchChart", labels, values, "รายได้รวมทั้งหมด");
 }
+
 function salesTable(rows, options={}){
+  if(!rows.length) return `<div class="empty">ยังไม่มีข้อมูล</div>`;
+  const showDetails = !!options.details;
+  return `<div class="table-wrap sales-table-wrap"><table class="sales-table">
+    <thead><tr><th>วันที่</th><th>สาขา</th><th>สถานะ</th><th class="money">รายได้รวมทั้งหมด</th><th class="money">รายจ่ายรวมทั้งหมด</th><th class="money">เอาเงินสดให้เจ้าของ</th><th class="money">เงินสดขาด/เกิน</th><th>หมายเหตุ</th>${showDetails?`<th>รายละเอียด</th>`:""}</tr></thead>
+    <tbody>${rows.map((r,i)=>{
+      if(r.closed){
+        const note = r.note ? ` · ${escapeHtml(r.note)}` : "";
+        return `<tr class="sales-main-row closed-short-row">
+          <td data-label="วันที่">${thaiDate(r.date)}</td>
+          <td data-label="สาขา">${escapeHtml(branchName(r.branchId))}</td>
+          <td data-label="สถานะ"><span class="pill warn">หยุดร้าน</span></td>
+          <td data-label="สรุป" colspan="${showDetails?6:5}" class="closed-short-cell"><b>หยุดร้าน</b>${note}</td>
+        </tr>`;
+      }
+      const totalExpense = numberValue(r.milkCost) + numberValue(r.otherExpenseTotal);
+      return `<tr class="sales-main-row">
+        <td data-label="วันที่">${thaiDate(r.date)}</td><td data-label="สาขา">${escapeHtml(branchName(r.branchId))}</td>
+        <td data-label="สถานะ"><span class="pill ok">เปิดร้าน</span></td>
+        <td data-label="รายได้รวมทั้งหมด" class="money">${money(r.totalAll)}</td>
+        <td data-label="รายจ่ายรวมทั้งหมด" class="money">${money(totalExpense)}</td>
+        <td data-label="เอาเงินสดให้เจ้าของ" class="money">${money(r.ownerCashOut)}</td>
+        <td data-label="เงินสดขาด/เกิน" class="money">${money(r.cashDiff)}</td>
+        <td data-label="หมายเหตุ">${escapeHtml(r.note||"")}</td>
+        ${showDetails?`<td data-label="รายละเอียด"><button type="button" class="btn secondary small monthly-detail-btn" data-detail="${i}">แสดงรายละเอียด</button></td>`:""}
+      </tr>
+      ${showDetails?`<tr class="monthly-detail-row hidden" data-detail="${i}"><td colspan="9" class="monthly-detail-cell">${monthlySalesDetailHtml(r)}</td></tr>`:""}`;
+    }).join("")}</tbody></table></div>`;
+}
+){
   if(!rows.length) return `<div class="empty">ยังไม่มีข้อมูล</div>`;
   const showDetails = !!options.details;
   return `<div class="table-wrap sales-table-wrap"><table class="sales-table">
@@ -689,6 +906,7 @@ async function renderDaily(){
   const date = todayISO();
   content().innerHTML = `
     ${pageTitle("บันทึกยอดขายรายวัน")}
+    <div id="dailyMissingWarn"></div>
     <form id="dailyForm" class="daily-form-wide">
       <div class="panel daily-panel daily-panel-head daily-control-panel">
         <h3>วันที่ / สาขา / สถานะร้าน</h3>
@@ -790,7 +1008,19 @@ function bindDaily(){
   addExpenseRow();
   addDessertRow();
   loadExistingDaily();
+  loadDailyMissingWarn();
   updateOnlineUi();
+}
+async function loadDailyMissingWarn(){
+  const box = $("#dailyMissingWarn");
+  if(!box) return;
+  const date = yesterdayISO();
+  const branches = visibleBranches();
+  if(!branches.length) return;
+  const snap = await getDocs(collection(appState.db, "dailySales"));
+  const existing = new Set(snap.docs.map(d=>d.id));
+  const missing = branches.filter(b=>!existing.has(`${b.id}_${date}`));
+  box.innerHTML = missing.length ? `<div class="state warn"><b>เตือน:</b> เมื่อวาน (${thaiDate(date)}) ยังไม่ได้ลงข้อมูลหรือเลือกหยุดร้านของสาขา ${missing.map(b=>escapeHtml(b.name)).join(", ")} กรุณาย้อนกลับไปลงข้อมูลหรือเลือกหยุดร้านให้ครบ</div>` : "";
 }
 function refreshDailyWorkers(selected=[]){
   const branchId = $("#dailyBranch").value;
@@ -1065,6 +1295,7 @@ async function saveDaily(e){
   await afterWrite("daily_sales");
   showToast(data.closed ? "บันทึกหยุดร้านแล้ว และล้างข้อมูลยอดของวันนั้นแล้ว" : "บันทึกยอดขายสำเร็จ");
   await loadExistingDaily();
+  await loadDailyMissingWarn();
 }
 
 async function saveDailyDraft(){
@@ -1294,16 +1525,21 @@ async function renderAttendance(){
       $("#attReasonBox")?.classList.toggle("hidden", !["ลาป่วย","ลากิจ","อื่น ๆ"].includes(status));
       $("#dailyWorkBox")?.classList.toggle("hidden", !(isDailyWorker() && status === "ทำงาน"));
       $("#hourlyTimeBox")?.classList.toggle("hidden", !(isDailyWorker() && status === "ทำงาน" && $("#dailyWorkType")?.value === "hourly"));
+      $("#rendoPartTimeBox")?.classList.toggle("hidden", !(isNongkhaiUser() && status === "ทำงาน"));
+      $("#rendoTimeBox")?.classList.toggle("hidden", !(isNongkhaiUser() && status === "ทำงาน" && $("#rendoPartTime")?.checked));
     };
     $("#attStatus").onchange = updateAtt;
     $("#dailyWorkType") && ($("#dailyWorkType").onchange = updateAtt);
+    $("#rendoPartTime") && ($("#rendoPartTime").onchange = updateAtt);
     updateAtt();
     $("#attForm").onsubmit = saveAttendance;
   }
   await loadAttendanceResult();
 }
+
 function attendanceFormHtml(){
   const daily = isDailyWorker();
+  const showRendo = isNongkhaiUser();
   return `<form id="attForm" class="panel">
     <h3>เช็คชื่อวันนี้</h3>
     <div class="grid three">
@@ -1323,9 +1559,19 @@ function attendanceFormHtml(){
         </div>
       </div>
     </div>` : ""}
+    ${showRendo ? `<div id="rendoPartTimeBox" class="panel inner-panel">
+      <h3>พาร์ทไทม์ Rendo</h3>
+      <label class="check-item"><input id="rendoPartTime" type="checkbox"> วันนี้ไปทำพาร์ทไทม์ Rendo</label>
+      <div id="rendoTimeBox" class="grid two hidden" style="margin-top:8px">
+        <div class="field"><label>เริ่มงาน Rendo</label><select id="rendoStartTime">${halfHourOptions("18:00","22:00","18:00")}</select></div>
+        <div class="field"><label>เลิกงาน Rendo</label><select id="rendoEndTime">${halfHourOptions("18:00","22:00","22:00")}</select></div>
+      </div>
+      <small>เลือกเวลาได้ทีละครึ่งชั่วโมง ตั้งแต่ 18:00-22:00</small>
+    </div>` : ""}
     <div class="sticky-save"><button class="btn full write-action">บันทึกเช็คชื่อ</button></div>
   </form>`;
 }
+
 
 async function saveAttendance(e){
   e.preventDefault();
@@ -1341,6 +1587,14 @@ async function saveAttendance(e){
     if(status === "ทำงาน" && data.workType === "hourly" && minutesFromTime(data.endTime) <= minutesFromTime(data.startTime)) return showToast("เวลาเลิกงานต้องมากกว่าเวลาเริ่มงาน");
     data.dailyCalculatedPay = calcDailyAttendancePay(data);
   }
+  if(isNongkhaiUser()){
+    data.rendoPartTime = status === "ทำงาน" && !!$("#rendoPartTime")?.checked;
+    data.rendoStartTime = data.rendoPartTime ? $("#rendoStartTime")?.value : "";
+    data.rendoEndTime = data.rendoPartTime ? $("#rendoEndTime")?.value : "";
+    if(data.rendoPartTime && (minutesFromTime(data.rendoEndTime) <= minutesFromTime(data.rendoStartTime))) return showToast("เวลาเลิก Rendo ต้องมากกว่าเวลาเริ่ม");
+    data.rendoHours = data.rendoPartTime ? (minutesFromTime(data.rendoEndTime)-minutesFromTime(data.rendoStartTime))/60 : 0;
+    data.rendoCalculatedPay = calcRendoPartTimePay(data);
+  }
   const id = `${appState.currentUser.id}_${date}`;
   const before = await getDoc(doc(appState.db, "attendance", id));
   await setDoc(doc(appState.db, "attendance", id), data, {merge:true});
@@ -1349,29 +1603,45 @@ async function saveAttendance(e){
   await afterWrite("attendance");
   await loadAttendanceResult();
 }
+
 async function loadAttendanceResult(){
   const monthKey=$("#attMonth").value, userId=$("#attUser").value;
   const user = appState.users.find(u=>u.id===userId) || appState.currentUser;
   const snap = await getDocs(query(collection(appState.db, "attendance"), where("monthKey","==",monthKey)));
-  const rows = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(r=>r.userId===userId).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+  const rows = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(r=>r.userId===userId).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
   const count = status => rows.filter(r=>r.status===status).length;
   const isDailyUser = user.role === "daily";
+  const today = todayISO();
+  const endDay = monthKey === today.slice(0,7) ? Number(today.slice(8,10)) - 1 : daysInMonthKey(monthKey);
+  const checkedDates = new Set(rows.map(r=>r.date));
+  const missingDays = [];
+  for(let d=1; d<=Math.max(0,endDay); d++){
+    const iso = `${monthKey}-${String(d).padStart(2,"0")}`;
+    if(!checkedDates.has(iso)) missingDays.push(d);
+  }
+  const missWarn = missingDays.length ? `<div class="state warn"><b>ยังไม่ได้เช็คชื่อวันที่:</b> ${missingDays.join(", ")} กรุณาย้อนกลับไปลง ทำงาน/หยุด/ลา/อื่น ๆ ให้ครบ</div>` : "";
   const tableHtml = isDailyUser
     ? (rows.length ? `<div class="table-wrap"><table class="mobile-card-table"><thead><tr><th>วันที่</th><th>สถานะ</th><th>รูปแบบ</th><th>เวลา</th></tr></thead><tbody>${rows.map(r=>`<tr><td data-label="วันที่">${thaiDate(r.date)}</td><td data-label="สถานะ">${escapeHtml(r.status)}</td><td data-label="รูปแบบ">${r.workType==="hourly"?"รายชั่วโมง":(r.workType==="full"?"ทั้งวัน":"-")}</td><td data-label="เวลา">${r.workType==="hourly"?`${escapeHtml(r.startTime)}-${escapeHtml(r.endTime)}`:"-"}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีข้อมูล</div>`)
     : (rows.length ? `<div class="table-wrap"><table class="mobile-card-table"><thead><tr><th>วันที่</th><th>สถานะ</th><th>เหตุผล</th></tr></thead><tbody>${rows.map(r=>`<tr><td data-label="วันที่">${thaiDate(r.date)}</td><td data-label="สถานะ">${escapeHtml(r.status)}</td><td data-label="เหตุผล">${escapeHtml(r.reason||"")}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีข้อมูล</div>`);
+  const rendoRows = rows.filter(r=>r.rendoPartTime);
+  const rendoTable = rendoRows.length ? `<div class="panel"><h3>ตารางลงเวลา พาร์ทไทม์ Rendo</h3><div class="table-wrap"><table class="mobile-card-table"><thead><tr><th>วันที่</th><th>เวลา</th><th class="money">ชั่วโมง</th><th class="money">ค่าตอบแทน</th></tr></thead><tbody>${rendoRows.map(r=>`<tr><td data-label="วันที่">${thaiDate(r.date)}</td><td data-label="เวลา">${escapeHtml(r.rendoStartTime)}-${escapeHtml(r.rendoEndTime)}</td><td data-label="ชั่วโมง" class="money">${money(r.rendoHours)}</td><td data-label="ค่าตอบแทน" class="money">${money(calcRendoPartTimePay(r))}</td></tr>`).join("")}</tbody></table></div></div>` : "";
   $("#attResult").innerHTML = `
+    ${missWarn}
     ${kpis([
       {label:"ทำงาน", value:`${count("ทำงาน")} วัน`},
       {label:"หยุด", value:`${count("หยุด")} วัน`},
       ...(isDailyUser ? [] : [
         {label:"ลาพักผ่อน", value:`${count("ลาพักผ่อน")} วัน`},
         {label:"ลาป่วย/ลากิจ/อื่น ๆ", value:`${count("ลาป่วย")+count("ลากิจ")+count("อื่น ๆ")} วัน`}
-      ])
+      ]),
+      ...(isNongkhaiUser(user) ? [{label:"พาร์ทไทม์ Rendo", value:`${money(rendoRows.reduce((s,r)=>s+numberValue(r.rendoHours),0))} ชม.`}] : [])
     ])}
     <div class="panel"><h3>${isDailyUser ? "ตารางเช็คชื่อรายวัน" : "ตารางเช็คชื่อพนักงานทั่วไป"}</h3>
       ${tableHtml}
-    </div>`;
+    </div>
+    ${rendoTable}`;
 }
+
 
 async function renderAdvances(){
   if(!canAccessAdvances()) return content().innerHTML = `<div class="state error">ไม่มีสิทธิ์เข้าหน้านี้</div>`;
@@ -1460,6 +1730,126 @@ async function loadAdvances(){
   updateOnlineUi();
 }
 
+
+async function renderOwnerExpenses(){
+  if(!isOwnerOrManager()) return content().innerHTML = `<div class="state error">ไม่มีสิทธิ์เข้าหน้านี้</div>`;
+  const monthKey = currentMonthKey();
+  content().innerHTML = `
+    ${pageTitle("ลงรายจ่าย", "รายจ่ายเจ้าของลง แยกจากค่านม/รายจ่ายในหน้ายอดขาย")}
+    <div class="panel">
+      <div class="grid three">
+        <div class="field"><label>เดือนที่แสดง</label><input id="ownerExpenseMonth" type="month" value="${monthKey}"></div>
+        <div class="field"><label>&nbsp;</label><button id="reloadOwnerExpense" class="btn secondary">โหลดสรุป</button></div>
+      </div>
+    </div>
+    <form id="recurringExpenseForm" class="panel">
+      <h3>เพิ่มรายจ่ายประจำ</h3>
+      <div class="state ok">รายจ่ายประจำที่เพิ่มเองจะจำไปเดือนถัด ๆ ไป และแก้ไข/ปิดใช้ได้ภายหลัง</div>
+      <div class="grid three">
+        <div class="field"><label>เริ่มตั้งแต่เดือน</label><input id="recStartMonth" type="month" value="${monthKey}"></div>
+        <div class="field"><label>ชื่อรายจ่าย</label><input id="recName" placeholder="เช่น ค่าเช่า / ค่าเน็ต / ค่าบัญชี"></div>
+        <div class="field"><label>จำนวนเงิน/เดือน</label><input id="recAmount" inputmode="decimal" placeholder="0"></div>
+        <div class="field"><label>คำนวณเป็นของ</label><select id="recScope"><option value="ALL">รวมทุกสาขา แบ่งตาม % ยอดขาย</option><option value="branch">เฉพาะสาขา</option></select></div>
+        <div class="field"><label>สาขา</label><select id="recBranch">${activeBranches().map(b=>`<option value="${b.id}">${escapeHtml(b.name)}</option>`).join("")}</select></div>
+        <div class="field"><label>&nbsp;</label><button class="btn write-action">บันทึกรายจ่ายประจำ</button></div>
+      </div>
+    </form>
+    <form id="oneTimeExpenseForm" class="panel">
+      <h3>เพิ่มรายจ่ายอื่น ๆ</h3>
+      <div class="grid three">
+        <div class="field"><label>วันที่</label><input id="oneDate" type="date" value="${todayISO()}"></div>
+        <div class="field"><label>ชื่อรายการ</label><input id="oneName" placeholder="เช่น ซ่อมเครื่อง / ซื้ออุปกรณ์"></div>
+        <div class="field"><label>จำนวนเงิน</label><input id="oneAmount" inputmode="decimal" placeholder="0"></div>
+        <div class="field"><label>คำนวณเป็นของ</label><select id="oneScope"><option value="branch">เฉพาะสาขา</option><option value="ALL">รวมทุกสาขา แบ่งตาม % ยอดขาย</option></select></div>
+        <div class="field"><label>สาขา</label><select id="oneBranch">${activeBranches().map(b=>`<option value="${b.id}">${escapeHtml(b.name)}</option>`).join("")}</select></div>
+        <div class="field"><label>หมายเหตุ</label><input id="oneNote" placeholder="-"></div>
+        <div class="field"><label>&nbsp;</label><button class="btn write-action">บันทึกรายจ่ายอื่น</button></div>
+      </div>
+    </form>
+    <div id="ownerExpenseResult"></div>`;
+  const toggleBranch = (scopeSel, branchSel)=>{ $(branchSel).disabled = $(scopeSel).value === "ALL"; };
+  $("#recScope").onchange = ()=>toggleBranch("#recScope", "#recBranch");
+  $("#oneScope").onchange = ()=>toggleBranch("#oneScope", "#oneBranch");
+  toggleBranch("#recScope", "#recBranch"); toggleBranch("#oneScope", "#oneBranch");
+  $("#reloadOwnerExpense").onclick = loadOwnerExpenseResult;
+  $("#ownerExpenseMonth").onchange = loadOwnerExpenseResult;
+  $("#recurringExpenseForm").onsubmit = saveRecurringOwnerExpense;
+  $("#oneTimeExpenseForm").onsubmit = saveOneTimeOwnerExpense;
+  await loadOwnerExpenseResult();
+}
+async function saveRecurringOwnerExpense(e){
+  e.preventDefault();
+  if(!requireOnline()) return;
+  const name = $("#recName").value.trim();
+  const amount = numberValue($("#recAmount").value);
+  if(!name || amount <= 0) return showToast("กรุณากรอกชื่อและจำนวนเงินรายจ่ายประจำ");
+  const data = {type:"recurring", name, amount, scope:$("#recScope").value, branchId:$("#recScope").value === "branch" ? $("#recBranch").value : "", startMonth:$("#recStartMonth").value || currentMonthKey(), active:true, createdAt:serverTimestamp(), createdBy:appState.currentUser.id, createdByName:appState.currentUser.name};
+  await addDoc(collection(appState.db, "ownerExpenses"), data);
+  await audit("ลงรายจ่ายประจำ", {name, monthKey:data.startMonth}, null, data);
+  await afterWrite("owner_expense_recurring");
+  showToast("บันทึกรายจ่ายประจำแล้ว");
+  $("#recName").value = ""; $("#recAmount").value = "";
+  await loadOwnerExpenseResult();
+}
+async function saveOneTimeOwnerExpense(e){
+  e.preventDefault();
+  if(!requireOnline()) return;
+  const date = $("#oneDate").value;
+  const name = $("#oneName").value.trim();
+  const amount = numberValue($("#oneAmount").value);
+  if(!date || !name || amount <= 0) return showToast("กรุณากรอกวันที่ ชื่อรายการ และจำนวนเงิน");
+  const data = {type:"one_time", date, monthKey:monthOf(date), name, amount, scope:$("#oneScope").value, branchId:$("#oneScope").value === "branch" ? $("#oneBranch").value : "", note:$("#oneNote").value.trim(), createdAt:serverTimestamp(), createdBy:appState.currentUser.id, createdByName:appState.currentUser.name};
+  await addDoc(collection(appState.db, "ownerExpenses"), data);
+  await audit("ลงรายจ่ายอื่น", {date, name}, null, data);
+  await afterWrite("owner_expense_one_time");
+  showToast("บันทึกรายจ่ายอื่นแล้ว");
+  ["#oneName","#oneAmount","#oneNote"].forEach(sel=>$(sel).value="");
+  await loadOwnerExpenseResult();
+}
+async function toggleOwnerExpense(id, active){
+  if(!requireOnline()) return;
+  await updateDoc(doc(appState.db, "ownerExpenses", id), {active, updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id});
+  await audit(active ? "เปิดใช้รายจ่ายประจำ" : "ปิดใช้รายจ่ายประจำ", {id});
+  await loadOwnerExpenseResult();
+}
+async function deleteOwnerExpense(id){
+  if(!requireOnline()) return;
+  if(!confirm("ลบรายการรายจ่ายนี้ใช่ไหม?")) return;
+  await deleteDoc(doc(appState.db, "ownerExpenses", id));
+  await audit("ลบรายจ่ายเจ้าของลง", {id});
+  await loadOwnerExpenseResult();
+}
+async function loadOwnerExpenseResult(){
+  const monthKey = $("#ownerExpenseMonth").value || currentMonthKey();
+  const box = $("#ownerExpenseResult");
+  box.innerHTML = `<div class="loading">กำลังคำนวณรายจ่าย...</div>`;
+  const result = await computeOwnerExpensesMonth(monthKey);
+  const expSnap = await getDocs(collection(appState.db, "ownerExpenses"));
+  const docs = expSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  const recurring = docs.filter(r=>(r.type || (r.recurring?"recurring":"one_time")) === "recurring").sort((a,b)=>String(a.name).localeCompare(String(b.name),"th"));
+  const oneTime = docs.filter(r=>(r.type || "one_time") === "one_time" && r.monthKey === monthKey).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const branchSummary = activeBranches().map(b=>({branch:b, amount:numberValue(result.byBranch[b.id])}));
+  const rowScope = r => (r.scope || "branch") === "ALL" ? "รวมทุกสาขา แบ่งตาม % ยอดขาย" : `สาขา ${branchName(r.branchId)}`;
+  box.innerHTML = `
+    ${kpis([{label:"รายจ่ายเจ้าของลงรวมเดือนนี้", value:`${money(result.total)} บาท`}, ...branchSummary.map(x=>({label:`ภาระ ${x.branch.name}`, value:`${money(x.amount)} บาท`}))])}
+    <div class="panel">
+      <h3>รายจ่ายอัตโนมัติจากค่าตอบแทน</h3>
+      <div class="state ok">ดึงจากช่อง “ต้นทุนรวม+ปกส.” หรือ “ต้นทุนรวม” ในหน้าค่าตอบแทนที่บันทึกไว้แล้ว หากยอดยังไม่ขึ้น ให้ไปหน้าค่าตอบแทนแล้วกดบันทึกแถวพนักงานก่อน</div>
+      ${result.details.filter(x=>x.kind==="salary").length ? `<div class="table-wrap"><table><thead><tr><th>รายการ</th><th class="money">ยอดรวม</th><th>กระจายเป็นสาขา</th></tr></thead><tbody>${result.details.filter(x=>x.kind==="salary").map(x=>`<tr><td>${escapeHtml(x.name)}</td><td class="money">${money(x.amount)}</td><td>${Object.entries(x.allocation||{}).map(([id,a])=>`${branchName(id)} ${money(a)}`).join(" / ")}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty compact">ยังไม่มีค่าตอบแทนที่บันทึกไว้สำหรับเดือนนี้</div>`}
+    </div>
+    <div class="panel">
+      <h3>รายจ่ายประจำที่จดจำไปเดือนถัด ๆ ไป</h3>
+      ${recurring.length ? `<div class="table-wrap"><table><thead><tr><th>เริ่มเดือน</th><th>รายการ</th><th class="money">ยอด/เดือน</th><th>คิดเป็นของ</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>${recurring.map(r=>`<tr><td>${thaiMonth(r.startMonth)}</td><td>${escapeHtml(r.name)}</td><td class="money">${money(r.amount)}</td><td>${rowScope(r)}</td><td>${r.active===false?"ปิดใช้":"ใช้อยู่"}</td><td><button class="btn ghost small write-action toggle-owner-exp" data-id="${r.id}" data-active="${r.active===false?"1":"0"}">${r.active===false?"เปิดใช้":"ปิดใช้"}</button> <button class="btn ghost small write-action delete-owner-exp" data-id="${r.id}">ลบ</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty compact">ยังไม่มีรายจ่ายประจำที่เพิ่มเอง</div>`}
+    </div>
+    <div class="panel">
+      <h3>รายจ่ายอื่น ๆ เดือน ${thaiMonth(monthKey)}</h3>
+      ${oneTime.length ? `<div class="table-wrap"><table><thead><tr><th>วันที่</th><th>รายการ</th><th class="money">ยอด</th><th>คิดเป็นของ</th><th>หมายเหตุ</th><th>จัดการ</th></tr></thead><tbody>${oneTime.map(r=>`<tr><td>${thaiDate(r.date)}</td><td>${escapeHtml(r.name)}</td><td class="money">${money(r.amount)}</td><td>${rowScope(r)}</td><td>${escapeHtml(r.note||"")}</td><td><button class="btn ghost small write-action delete-owner-exp" data-id="${r.id}">ลบ</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty compact">ยังไม่มีรายจ่ายอื่นในเดือนนี้</div>`}
+    </div>`;
+  $$(".toggle-owner-exp").forEach(btn=>btn.onclick=()=>toggleOwnerExpense(btn.dataset.id, btn.dataset.active === "1"));
+  $$(".delete-owner-exp").forEach(btn=>btn.onclick=()=>deleteOwnerExpense(btn.dataset.id));
+  updateOnlineUi();
+}
+
 async function renderCompensation(){
   if(!isOwnerOrManager()) return content().innerHTML = `<div class="state error">ไม่มีสิทธิ์เข้าหน้านี้</div>`;
   const monthKey = currentMonthKey();
@@ -1477,7 +1867,8 @@ async function renderCompensation(){
       <div class="grid three compact-grid">
         <div class="field"><label>ทำงานทั้งวัน (บาท/วัน)</label><input id="dailyFullPay" inputmode="decimal" value="${numberValue(dailyPaySettings().fullDayAmount)}"></div>
         <div class="field"><label>รายชั่วโมง (บาท/ชั่วโมง)</label><input id="dailyHourPay" inputmode="decimal" value="${numberValue(dailyPaySettings().hourAmount)}"></div>
-        <div class="field"><label>&nbsp;</label><button id="saveDailyPaySettings" class="btn write-action">บันทึกค่าตอบแทนรายวัน</button></div>
+        <div class="field"><label>พาร์ทไทม์ Rendo (บาท/ชั่วโมง)</label><input id="rendoHourPay" inputmode="decimal" value="${numberValue(rendoHourlyRate())}"></div>
+        <div class="field"><label>&nbsp;</label><button id="saveDailyPaySettings" class="btn write-action">บันทึกค่าตอบแทนรายวัน/Rendo</button></div>
       </div>
     </div>
     <div class="panel compact-panel">
@@ -1519,9 +1910,16 @@ async function loadCompensation(){
   const dessertOT = {};
   rows.filter(r=>r.otEnabled).forEach(r=>{
     const workers = r.otWorkerIds || [];
-    const per = workers.length ? numberValue(r.dessertPayTotal) / workers.length : 0;
+    const dessertTotalNow = (r.desserts || []).reduce((sum,d)=>{
+      const currentItem = dessertItemByName(d.name) || {};
+      const price = currentItem.name ? numberValue(currentItem.price) : numberValue(d.price);
+      const percent = currentItem.name ? numberValue(currentItem.percent) : numberValue(d.percent);
+      return sum + price * numberValue(d.qty) * percent / 100;
+    }, 0);
+    const per = workers.length ? dessertTotalNow / workers.length : 0;
     workers.forEach(id => dessertOT[id] = (dessertOT[id] || 0) + per);
   });
+  const rendoOT = {};
   const attSnap = await getDocs(query(collection(appState.db, "attendance"), where("monthKey","==",monthKey)));
   const dailyWages = {};
   attSnap.docs.map(d=>d.data()).forEach(r=>{
@@ -1532,6 +1930,9 @@ async function loadCompensation(){
       if((r.workType || "full") === "hourly") dailyWages[r.userId].hourly += pay;
       else dailyWages[r.userId].full += pay;
       dailyWages[r.userId].total += pay;
+    }
+    if(r.rendoPartTime){
+      rendoOT[r.userId] = (rendoOT[r.userId] || 0) + calcRendoPartTimePay(r);
     }
   });
   const advSnap = await getDocs(query(collection(appState.db, "salaryAdvances"), where("monthKey","==",monthKey)));
@@ -1548,7 +1949,7 @@ async function loadCompensation(){
 
   const regularTable = regularPayUsers.length ? `<div class="table-wrap"><table>
     <thead><tr>
-      <th>ชื่อ</th><th>ระดับ</th><th class="money">เงินเดือน</th><th class="money">OT เพิ่มอื่น ๆ</th><th>OT จากอะไร</th><th class="money">OT ทำขนม</th>
+      <th>ชื่อ</th><th>ระดับ</th><th class="money">เงินเดือน</th><th class="money">OT เพิ่มอื่น ๆ</th><th>OT จากอะไร</th><th class="money">OT ทำขนม</th><th class="money">OT พาร์ทไทม์ Rendo</th>
       <th class="money">เงินเพิ่มออกบูธ</th><th class="money">โบนัสรายวัน</th><th class="money">โบนัสรายเดือน</th>
       <th class="money">หักเงิน</th><th>รายละเอียดหัก</th><th class="money">เบิกล่วงหน้า</th><th class="money">ปกส.ลูกจ้าง</th>
       <th class="money">ยอดโอนปลายเดือน</th><th class="money">ต้นทุนรวม+ปกส.</th><th>บันทึก</th>
@@ -1564,16 +1965,18 @@ async function loadCompensation(){
       const daily = numberValue(dailyBonus[u.id]);
       const monthly = numberValue(monthlyBonus[u.id]);
       const dessert = numberValue(dessertOT[u.id]);
+      const rendo = isNongkhaiUser(u) ? numberValue(rendoOT[u.id]) : 0;
       const deduction = numberValue(r.deduction);
       const advance = numberValue(advances[u.id]);
-      const transfer = salary + otOther + dessert + boothBonus + daily + monthly - deduction - advance - employeeSS;
-      const totalCost = salary + otOther + dessert + boothBonus + daily + monthly - deduction + employerSS;
+      const transfer = salary + otOther + dessert + rendo + boothBonus + daily + monthly - deduction - advance - employeeSS;
+      const totalCost = salary + otOther + dessert + rendo + boothBonus + daily + monthly - deduction + employerSS;
       return `<tr class="comp-row" data-user="${u.id}" data-daily-role="0" data-daily-wage="0" data-daily-full-wage="0" data-daily-hourly-wage="0">
         <td>${escapeHtml(u.name)}</td><td>${roleBadge(u.role)}</td>
         <td><input class="comp-salary wide-money" inputmode="decimal" value="${salarySource === "" ? "" : salary}">${(r.salary === undefined || r.salary === null || r.salary === "") && salarySource !== "" ? `<small class="salary-copy-note">ลอกจากเดือนก่อน</small>` : ""}</td>
         <td><input class="comp-ot wide-money" inputmode="decimal" value="${otOther || ""}"></td>
         <td><input class="comp-ot-note" value="${escapeHtml(r.otOtherNote || "")}" placeholder="OT จากอะไร"></td>
         <td class="money comp-dessert" data-value="${dessert}">${money(dessert)}</td>
+        <td class="money comp-rendo" data-value="${rendo}">${money(rendo)}</td>
         <td><input class="comp-booth" inputmode="decimal" value="${boothBonus || ""}"></td>
         <td class="money comp-daily" data-value="${daily}">${money(daily)}</td>
         <td class="money comp-monthly" data-value="${monthly}">${money(monthly)}</td>
@@ -1592,7 +1995,7 @@ async function loadCompensation(){
       <th>ชื่อ</th><th>ระดับ</th>
       <th class="money">ค่าจ้างวันที่ทำงานทั้งวัน</th><th>ไม่นำทั้งวันมาคำนวณ</th>
       <th class="money">ค่าจ้างวันที่ทำงานรายชั่วโมง</th><th>ไม่นำรายชั่วโมงมาคำนวณ</th>
-      <th class="money">ค่าจ้างที่นำมาคิด</th><th class="money">OT เพิ่มอื่น ๆ</th><th>OT จากอะไร</th><th class="money">OT ทำขนม</th><th class="money">เงินเพิ่มออกบูธ</th>
+      <th class="money">ค่าจ้างที่นำมาคิด</th><th class="money">OT เพิ่มอื่น ๆ</th><th>OT จากอะไร</th><th class="money">OT ทำขนม</th><th class="money">OT พาร์ทไทม์ Rendo</th><th class="money">เงินเพิ่มออกบูธ</th>
       <th class="money">หักเงิน</th><th>รายละเอียดหัก</th><th class="money">เบิกล่วงหน้า</th><th class="money">ยอดโอนปลายเดือน</th><th class="money">ต้นทุนรวม</th><th>บันทึก</th>
     </tr></thead>
     <tbody>${dailyPayUsers.map(u=>{
@@ -1604,10 +2007,11 @@ async function loadCompensation(){
       const otOther = numberValue(r.otOther);
       const boothBonus = numberValue(r.boothBonus);
       const dessert = numberValue(dessertOT[u.id]);
+      const rendo = isNongkhaiUser(u) ? numberValue(rendoOT[u.id]) : 0;
       const deduction = numberValue(r.deduction);
       const advance = numberValue(advances[u.id]);
-      const transfer = salary + otOther + dessert + boothBonus - deduction - advance;
-      const totalCost = salary + otOther + dessert + boothBonus - deduction;
+      const transfer = salary + otOther + dessert + rendo + boothBonus - deduction - advance;
+      const totalCost = salary + otOther + dessert + rendo + boothBonus - deduction;
       return `<tr class="comp-row" data-user="${u.id}" data-daily-role="1" data-daily-wage="${numberValue(wage.total)}" data-daily-full-wage="${numberValue(wage.full)}" data-daily-hourly-wage="${numberValue(wage.hourly)}">
         <td>${escapeHtml(u.name)}</td><td>${roleBadge(u.role)}</td>
         <td class="money comp-daily-full-raw" data-value="${numberValue(wage.full)}">${money(wage.full)}</td>
@@ -1618,6 +2022,7 @@ async function loadCompensation(){
         <td><input class="comp-ot wide-money" inputmode="decimal" value="${otOther || ""}"></td>
         <td><input class="comp-ot-note" value="${escapeHtml(r.otOtherNote || "")}" placeholder="OT จากอะไร"></td>
         <td class="money comp-dessert" data-value="${dessert}">${money(dessert)}</td>
+        <td class="money comp-rendo" data-value="${rendo}">${money(rendo)}</td>
         <td><input class="comp-booth" inputmode="decimal" value="${boothBonus || ""}"></td>
         <td><input class="comp-deduction wide-money" inputmode="decimal" value="${deduction || ""}"></td>
         <td><input class="comp-deduction-note" value="${escapeHtml(r.deductionNote || "")}"></td>
@@ -1662,14 +2067,15 @@ function recalcCompRow(row){
   const salary = numberValue($(".comp-salary", row).value);
   const ot = numberValue($(".comp-ot", row).value);
   const dessert = numberValue($(".comp-dessert", row).dataset.value);
+  const rendo = numberValue($(".comp-rendo", row)?.dataset.value);
   const booth = numberValue($(".comp-booth", row).value);
   const daily = isDaily ? 0 : numberValue($(".comp-daily", row)?.dataset.value);
   const monthly = isDaily ? 0 : numberValue($(".comp-monthly", row)?.dataset.value);
   const deduction = numberValue($(".comp-deduction", row).value);
   const advance = numberValue($(".comp-advance", row).dataset.value);
   const empSS = isDaily ? 0 : salary * .05, employerSS = isDaily ? 0 : salary * .05;
-  const transfer = salary + ot + dessert + booth + daily + monthly - deduction - advance - empSS;
-  const cost = salary + ot + dessert + booth + daily + monthly - deduction + employerSS;
+  const transfer = salary + ot + dessert + rendo + booth + daily + monthly - deduction - advance - empSS;
+  const cost = salary + ot + dessert + rendo + booth + daily + monthly - deduction + employerSS;
   if($(".comp-employee-ss", row)) $(".comp-employee-ss", row).textContent = money(empSS);
   $(".comp-transfer", row).innerHTML = `<b>${money(transfer)}</b>`;
   $(".comp-cost", row).innerHTML = `<b>${money(cost)}</b>`;
@@ -1683,6 +2089,7 @@ function getCompRowData(row, monthKey){
   const salary = numberValue($(".comp-salary", row).value);
   const otOther = numberValue($(".comp-ot", row).value);
   const dessertOT = numberValue($(".comp-dessert", row).dataset.value);
+  const rendoOT = numberValue($(".comp-rendo", row)?.dataset.value);
   const boothBonus = numberValue($(".comp-booth", row).value);
   const dailyBonus = isDaily ? 0 : numberValue($(".comp-daily", row)?.dataset.value);
   const monthlyBonus = isDaily ? 0 : numberValue($(".comp-monthly", row)?.dataset.value);
@@ -1690,8 +2097,8 @@ function getCompRowData(row, monthKey){
   const advances = numberValue($(".comp-advance", row).dataset.value);
   const employeeSS = isDaily ? 0 : salary * .05;
   const employerSS = isDaily ? 0 : salary * .05;
-  const netTransfer = salary + otOther + dessertOT + boothBonus + dailyBonus + monthlyBonus - deduction - advances - employeeSS;
-  const totalIncome = salary + otOther + dessertOT + boothBonus + dailyBonus + monthlyBonus;
+  const netTransfer = salary + otOther + dessertOT + rendoOT + boothBonus + dailyBonus + monthlyBonus - deduction - advances - employeeSS;
+  const totalIncome = salary + otOther + dessertOT + rendoOT + boothBonus + dailyBonus + monthlyBonus;
   const dailyFullWageBeforeExclude = numberValue(row.dataset.dailyFullWage);
   const dailyHourlyWageBeforeExclude = numberValue(row.dataset.dailyHourlyWage);
   const dailyFullPaidAlready = !!$(".comp-daily-full-paid", row)?.checked;
@@ -1701,9 +2108,9 @@ function getCompRowData(row, monthKey){
     salary, dailyWageBeforeExclude:numberValue(row.dataset.dailyWage),
     dailyFullWageBeforeExclude, dailyHourlyWageBeforeExclude, dailyFullPaidAlready, dailyHourlyPaidAlready,
     dailyPaidAlready:isDaily && dailyFullPaidAlready && dailyHourlyPaidAlready,
-    otOther, otOtherNote:$(".comp-ot-note", row)?.value.trim() || "", dessertOT,
+    otOther, otOtherNote:$(".comp-ot-note", row)?.value.trim() || "", dessertOT, rendoOT,
     boothBonus, dailyBonus, monthlyBonus, deduction, deductionNote:$(".comp-deduction-note", row)?.value.trim() || "",
-    advances, employeeSS, employerSS, totalIncome, netTransfer, totalCost:salary + otOther + dessertOT + boothBonus + dailyBonus + monthlyBonus - deduction + employerSS,
+    advances, employeeSS, employerSS, totalIncome, netTransfer, totalCost:salary + otOther + dessertOT + rendoOT + boothBonus + dailyBonus + monthlyBonus - deduction + employerSS,
     createdBy:appState.currentUser?.name || "-", createdAt:new Date()
   };
 }
@@ -1721,6 +2128,7 @@ function buildCompSummaryFromData(d){
     ...wageLines,
     `OT เพิ่มอื่น ๆ: ${money(d.otOther)} บาท${d.otOtherNote ? ` (${d.otOtherNote})` : ""}`,
     `OT ทำขนม: ${money(d.dessertOT)} บาท`,
+    `OT พาร์ทไทม์ Rendo: ${money(d.rendoOT || 0)} บาท`,
     `เงินเพิ่มออกบูธ: ${money(d.boothBonus)} บาท`,
     ...(!d.isDaily ? [`โบนัสรายวัน: ${money(d.dailyBonus)} บาท`, `โบนัสรายเดือน: ${money(d.monthlyBonus)} บาท`] : []),
     `รวมรายรับก่อนหัก: ${money(d.totalIncome)} บาท`,
@@ -1745,7 +2153,7 @@ function buildCompPdfHtml(d){
     <div class="pdf-info-grid"><div><small>ชื่อพนักงาน</small><b>${escapeHtml(d.userName)}</b></div><div><small>ตำแหน่ง</small><b>${escapeHtml(role)}</b></div><div><small>จัดทำโดย</small><b>${escapeHtml(d.createdBy)}</b></div><div><small>วันที่จัดทำ</small><b>${madeAt}</b></div></div>
     <table class="pdf-table"><thead><tr><th>รายการ</th><th>จำนวนเงิน (บาท)</th></tr></thead><tbody>
       ${dailyWageRows}
-      ${item("OT เพิ่มอื่น ๆ", d.otOther, d.otOtherNote)}${item("OT ทำขนม", d.dessertOT)}${item("เงินเพิ่มออกบูธ", d.boothBonus)}
+      ${item("OT เพิ่มอื่น ๆ", d.otOther, d.otOtherNote)}${item("OT ทำขนม", d.dessertOT)}${item("OT พาร์ทไทม์ Rendo", d.rendoOT || 0)}${item("เงินเพิ่มออกบูธ", d.boothBonus)}
       ${!d.isDaily ? `${item("โบนัสรายวัน", d.dailyBonus)}${item("โบนัสรายเดือน", d.monthlyBonus)}` : ""}
       <tr class="pdf-subtotal"><td>รวมรายรับก่อนหัก</td><td class="pdf-money">${money(d.totalIncome)}</td></tr>
       ${item("หักเงิน", -Math.abs(d.deduction), d.deductionNote)}${item("เบิกล่วงหน้า", -Math.abs(d.advances))}
@@ -1793,7 +2201,7 @@ async function saveCompRow(row, monthKey){
     salary:d.salary, dailyWageBeforeExclude:d.dailyWageBeforeExclude,
     dailyFullWageBeforeExclude:d.dailyFullWageBeforeExclude, dailyHourlyWageBeforeExclude:d.dailyHourlyWageBeforeExclude,
     dailyFullPaidAlready:d.dailyFullPaidAlready, dailyHourlyPaidAlready:d.dailyHourlyPaidAlready, dailyPaidAlready:d.dailyPaidAlready,
-    otOther:d.otOther, otOtherNote:d.otOtherNote, dessertOT:d.dessertOT, boothBonus:d.boothBonus,
+    otOther:d.otOther, otOtherNote:d.otOtherNote, dessertOT:d.dessertOT, rendoOT:d.rendoOT || 0, boothBonus:d.boothBonus,
     dailyBonus:d.dailyBonus, monthlyBonus:d.monthlyBonus, dailyBonusOverride:null, monthlyBonusOverride:null,
     deduction:d.deduction, deductionNote:d.deductionNote, advances:d.advances,
     employeeSocialSecurity:d.employeeSS, employerSocialSecurity:d.employerSS, netTransfer:d.netTransfer, totalCost:d.totalCost,
@@ -1812,11 +2220,13 @@ async function saveDailyPaySettings(){
   if(!requireOnline()) return;
   const hourAmount = numberValue($("#dailyHourPay").value);
   const dailyWorkerPay = {fullDayAmount:numberValue($("#dailyFullPay").value), hourAmount, halfHourAmount:hourAmount / 2};
-  if(dailyWorkerPay.fullDayAmount <= 0 || dailyWorkerPay.hourAmount <= 0) return showToast("กรุณากรอกค่าตอบแทนรายวัน/รายชั่วโมงให้ถูกต้อง");
-  await updateSettings({...appState.settings, dailyWorkerPay}, "ตั้งค่าค่าตอบแทนพนักงานรายวัน");
-  showToast("บันทึกค่าตอบแทนพนักงานรายวันแล้ว");
+  const rendoPartTimePay = {hourAmount:numberValue($("#rendoHourPay").value)};
+  if(dailyWorkerPay.fullDayAmount <= 0 || dailyWorkerPay.hourAmount <= 0 || rendoPartTimePay.hourAmount <= 0) return showToast("กรุณากรอกค่าตอบแทนรายวัน/รายชั่วโมง/Rendo ให้ถูกต้อง");
+  await updateSettings({...appState.settings, dailyWorkerPay, rendoPartTimePay}, "ตั้งค่าค่าตอบแทนพนักงานรายวันและพาร์ทไทม์ Rendo");
+  showToast("บันทึกค่าตอบแทนพนักงานรายวัน/Rendo แล้ว");
   await loadCompensation();
 }
+
 async function renderHistory(){
   if(!isOwnerOrManager()) return content().innerHTML = `<div class="state error">ไม่มีสิทธิ์เข้าหน้านี้</div>`;
   content().innerHTML = `${pageTitle("ประวัติ", "แสดงเฉพาะประวัติการแก้ไขหน้ายอดขายและเช็คชื่อ")}<div id="historyResult" class="panel"><div class="loading">กำลังโหลดประวัติ...</div></div>`;
@@ -1824,7 +2234,7 @@ async function renderHistory(){
 }
 async function renderSystemHistory(){
   if(!isOwner()) return content().innerHTML = `<div class="state error">เฉพาะเจ้าของเท่านั้น</div>`;
-  content().innerHTML = `${pageTitle("ประวัติระบบ", "ข้อมูล Login / ค่าตอบแทน / ตั้งค่า / สำรองข้อมูล และรายการอื่น ๆ เห็นเฉพาะเจ้าของ")}<div id="historyResult" class="panel"><div class="loading">กำลังโหลดประวัติระบบ...</div></div>`;
+  content().innerHTML = `${pageTitle("ประวัติระบบ", "ข้อมูล Login / ค่าตอบแทน / ตั้งค่า และรายการระบบอื่น ๆ เห็นเฉพาะเจ้าของ")}<div id="historyResult" class="panel"><div class="loading">กำลังโหลดประวัติระบบ...</div></div>`;
   await loadHistory("system");
 }
 function formatAuditDetails(row){
@@ -1858,7 +2268,7 @@ function formatAuditDetails(row){
 async function loadHistory(mode="primary"){
   const snap = await getDocs(query(collection(appState.db, "auditLogs"), orderBy("createdAtISO","desc"), limit(250)));
   let rows = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(r=>!HIDDEN_HISTORY_ACTIONS.has(r.action));
-  rows = rows.filter(r=> mode === "system" ? !isPrimaryHistoryAction(r.action) : isPrimaryHistoryAction(r.action));
+  rows = rows.filter(r=> mode === "system" ? (!isPrimaryHistoryAction(r.action) && !String(r.action||"").includes("สำรอง")) : isPrimaryHistoryAction(r.action));
   if(!isOwner()) rows = rows.filter(r=>!r.hidden);
   const title = mode === "system" ? "รายการระบบล่าสุด" : "รายการยอดขายและเช็คชื่อล่าสุด";
   $("#historyResult").innerHTML = `
@@ -1999,7 +2409,7 @@ async function testBackupUrl(){
   if(!url) return showToast("กรุณากรอก URL ก่อน");
   const testUrl = `${url}${url.includes("?") ? "&" : "?"}action=test&source=love_matcha_sales_app&ts=${Date.now()}`;
   window.open(testUrl, "_blank", "noopener,noreferrer");
-  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.3.6 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
+  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.4.0 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
 }
 async function exportAllSalesCsv(){
   const snap = await getDocs(collection(appState.db, "dailySales"));
@@ -2012,7 +2422,7 @@ async function handleRestoreFile(){
   const lower = file.name.toLowerCase();
   if(!lower.endsWith(".json")){
     appState.restorePreview = null;
-    $("#restorePreview").innerHTML = `<div class="state error">v1.3.6 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
+    $("#restorePreview").innerHTML = `<div class="state error">v1.4.0 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
     $("#restoreBtn").disabled = true;
     return;
   }
