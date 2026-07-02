@@ -6,7 +6,7 @@ import {
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const VERSION = "v1.3.8";
+const VERSION = "v1.3.9";
 const DEFAULT_BACKUP_URL = "https://script.google.com/macros/s/AKfycbz7pwTBSDwVwja4ugxvlJoNYb4ksBk7METKzGd3bCARUzea99Sx0BTAJHIDi5N2iW7e/exec";
 const COLLECTIONS = [
   "users","branches","dailySales","dailyDrafts","dailyExpenses","cupCounts","dessertOT",
@@ -69,8 +69,8 @@ let appState = {
   firebase:null, auth:null, db:null, authUid:null,
   users:[], branches:[], settings:clone(DEFAULT_SETTINGS),
   currentUser:null, currentPage:"dashboard",
-  online:navigator.onLine, charts:{}, backupTimer:null,
-  dailyExisting:null, dailyDraftExisting:null, dailyLoadToken:0, restorePreview:null
+  online:navigator.onLine, charts:{}, backupTimer:null, cache:new Map(),
+  dailyExisting:null, dailyDraftExisting:null, dailyLoadToken:0, dailyRecalcTimer:null, restorePreview:null
 };
 
 const $ = (sel, root=document) => root.querySelector(sel);
@@ -145,6 +145,37 @@ function requireOnline(){
     return false;
   }
   return true;
+}
+const CACHE_TTL_MS = 30 * 1000;
+function getCache(key){
+  const item = appState.cache?.get(key);
+  if(!item) return null;
+  if(Date.now() - item.time > (item.ttl || CACHE_TTL_MS)){
+    appState.cache.delete(key);
+    return null;
+  }
+  return item.value;
+}
+function setCache(key, value, ttl=CACHE_TTL_MS){
+  appState.cache?.set(key, {time:Date.now(), ttl, value});
+  return value;
+}
+function clearCache(prefix=""){
+  if(!appState.cache) return;
+  if(!prefix){ appState.cache.clear(); return; }
+  [...appState.cache.keys()].forEach(k=>{ if(String(k).startsWith(prefix)) appState.cache.delete(k); });
+}
+async function cachedRows(key, loader, ttl=CACHE_TTL_MS){
+  const cached = getCache(key);
+  if(cached) return cached;
+  const rows = await loader();
+  return setCache(key, rows, ttl);
+}
+function scheduleDailyRecalc(){
+  clearTimeout(appState.dailyRecalcTimer);
+  appState.dailyRecalcTimer = setTimeout(()=>{
+    if(document.getElementById("dailyForm")) recalcDaily();
+  }, 80);
 }
 function requireRole(roles){
   return appState.currentUser && roles.includes(appState.currentUser.role);
@@ -529,7 +560,7 @@ async function afterWrite(actionName){
   if(!appState.settings?.autoBackup) return;
   const mode = appState.settings.autoBackup.mode || "off";
   if(mode === "onAction" || mode === "both"){
-    // v1.3.8: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
+    // v1.3.9: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
     setTimeout(()=>performBackup(`auto_${actionName}`, true).catch(e=>console.warn("auto backup", e)), 0);
   }
 }
@@ -586,17 +617,27 @@ function usersForBranch(branchId){
     u.role === "manager" || (u.branchIds || []).includes(branchId) || (u.branchIds || []).includes("ALL")
   )).sort((a,b)=>(ROLE_ORDER[a.role]||9)-(ROLE_ORDER[b.role]||9) || String(a.name).localeCompare(String(b.name),"th"));
 }
+async function getSalesRowsForMonthCached(monthKey){
+  return cachedRows(`dailySales:month:${monthKey}`, async()=>{
+    const snap = await getDocs(query(collection(appState.db, "dailySales"), where("monthKey", "==", monthKey)));
+    return snap.docs.map(d=>({id:d.id, ...d.data()}));
+  });
+}
+async function getSalesRowsForBranchCached(branchId){
+  return cachedRows(`dailySales:branch:${branchId}`, async()=>{
+    const snap = await getDocs(query(collection(appState.db, "dailySales"), where("branchId", "==", branchId)));
+    return snap.docs.map(d=>({id:d.id, ...d.data()}));
+  });
+}
 async function getSalesForMonth(monthKey, branchId="ALL", options={}){
-  const snap = await getDocs(query(collection(appState.db, "dailySales"), where("monthKey", "==", monthKey)));
-  let rows = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  let rows = (await getSalesRowsForMonthCached(monthKey)).slice();
   if(branchId !== "ALL") rows = rows.filter(r=>r.branchId === branchId);
   else if(!options.allBranches) rows = rows.filter(r=>isOwnerOrManager() || canSeeBranch(r.branchId));
   return rows.sort((a,b)=>String(a.date).localeCompare(String(b.date)) || String(a.branchId).localeCompare(String(b.branchId)));
 }
 async function getSalesForRange(startDate, endDate, branchIds=null, options={}){
   const months = monthKeysBetween(startDate, endDate);
-  const snaps = await Promise.all(months.map(mk=>getDocs(query(collection(appState.db, "dailySales"), where("monthKey", "==", mk)))));
-  let rows = snaps.flatMap(snap=>snap.docs.map(d=>({id:d.id, ...d.data()})));
+  let rows = (await Promise.all(months.map(getSalesRowsForMonthCached))).flat().slice();
   rows = rows.filter(r=>String(r.date) >= startDate && String(r.date) <= endDate);
   const ids = branchIds && branchIds.length ? branchIds : (isOwnerOrManager() ? activeBranches().map(b=>b.id) : visibleBranches().map(b=>b.id));
   rows = rows.filter(r=>ids.includes(r.branchId));
@@ -651,9 +692,12 @@ async function computeCompensationSummary(monthKey){
     const per = workers.length ? calculateDessertPayTotalForSale(r) / workers.length : 0;
     workers.forEach(id => dessertOT[id] = (dessertOT[id] || 0) + per);
   });
-  const attSnap = await getDocs(query(collection(appState.db, "attendance"), where("monthKey","==",monthKey)));
+  const attendanceRows = await cachedRows(`attendance:month:${monthKey}`, async()=>{
+    const attSnap = await getDocs(query(collection(appState.db, "attendance"), where("monthKey","==",monthKey)));
+    return attSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  });
   const dailyWages = {}, rendoOT = {};
-  attSnap.docs.map(d=>d.data()).forEach(r=>{
+  attendanceRows.forEach(r=>{
     const u = appState.users.find(x=>x.id===r.userId);
     if(u?.role === "daily"){
       if(!dailyWages[r.userId]) dailyWages[r.userId] = {full:0, hourly:0, total:0};
@@ -664,16 +708,25 @@ async function computeCompensationSummary(monthKey){
     }
     if(r.rendoPartTime) rendoOT[r.userId] = (rendoOT[r.userId] || 0) + calcRendoPartTimePay(r);
   });
-  const advSnap = await getDocs(query(collection(appState.db, "salaryAdvances"), where("monthKey","==",monthKey)));
+  const advanceRows = await cachedRows(`salaryAdvances:month:${monthKey}`, async()=>{
+    const advSnap = await getDocs(query(collection(appState.db, "salaryAdvances"), where("monthKey","==",monthKey)));
+    return advSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  });
   const advances = {};
-  advSnap.docs.map(d=>d.data()).forEach(r=>advances[r.userId]=(advances[r.userId]||0)+numberValue(r.amount));
-  const [compSnap, prevCompSnap] = await Promise.all([
-    getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",monthKey))),
-    getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",previousMonthKey(monthKey))))
+  advanceRows.forEach(r=>advances[r.userId]=(advances[r.userId]||0)+numberValue(r.amount));
+  const [compRows, prevCompRows] = await Promise.all([
+    cachedRows(`comp:records:${monthKey}`, async()=>{
+      const compSnap = await getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",monthKey)));
+      return compSnap.docs.map(d=>({id:d.id, ...d.data()}));
+    }),
+    cachedRows(`comp:records:${previousMonthKey(monthKey)}`, async()=>{
+      const prevCompSnap = await getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",previousMonthKey(monthKey))));
+      return prevCompSnap.docs.map(d=>({id:d.id, ...d.data()}));
+    })
   ]);
   const records = {}, prevRecords = {};
-  compSnap.docs.forEach(d=>records[d.data().userId]=({id:d.id, ...d.data()}));
-  prevCompSnap.docs.forEach(d=>prevRecords[d.data().userId]=({id:d.id, ...d.data()}));
+  compRows.forEach(r=>records[r.userId]=r);
+  prevCompRows.forEach(r=>prevRecords[r.userId]=r);
   const result = {};
   payUsers.forEach(u=>{
     const r = records[u.id] || {};
@@ -727,12 +780,18 @@ async function computeOwnerExpenseAllocationsForMonth(monthKey){
     pieces.forEach(p=>allocations.push({...source, branchId:p.branchId, allocatedAmount:p.amount}));
     directItems.push(source);
   });
-  const [tplSnap, expSnap] = await Promise.all([
-    getDocs(collection(appState.db, "ownerExpenseTemplates")),
-    getDocs(query(collection(appState.db, "ownerExpenses"), where("monthKey","==",monthKey)))
+  const [templateRows, expenseRows] = await Promise.all([
+    cachedRows("ownerExpenses:templates", async()=>{
+      const tplSnap = await getDocs(collection(appState.db, "ownerExpenseTemplates"));
+      return tplSnap.docs.map(d=>({id:d.id, ...d.data()}));
+    }),
+    cachedRows(`ownerExpenses:month:${monthKey}`, async()=>{
+      const expSnap = await getDocs(query(collection(appState.db, "ownerExpenses"), where("monthKey","==",monthKey)));
+      return expSnap.docs.map(d=>({id:d.id, ...d.data()}));
+    })
   ]);
-  tplSnap.docs.map(d=>({id:d.id, ...d.data()})).filter(t=>t.active!==false).forEach(t=>addAllocated({kind:"recurring", id:t.id, monthKey, date:`${monthKey}-01`, name:t.name, amount:numberValue(t.amount), scope:t.scope || "ALL", note:t.note || "รายจ่ายประจำ"}));
-  expSnap.docs.map(d=>({id:d.id, ...d.data()})).forEach(e=>addAllocated({kind:"other", id:e.id, monthKey, date:e.date, name:e.name, amount:numberValue(e.amount), scope:e.scope || "ALL", note:e.note || ""}));
+  templateRows.filter(t=>t.active!==false).forEach(t=>addAllocated({kind:"recurring", id:t.id, monthKey, date:`${monthKey}-01`, name:t.name, amount:numberValue(t.amount), scope:t.scope || "ALL", note:t.note || "รายจ่ายประจำ"}));
+  expenseRows.forEach(e=>addAllocated({kind:"other", id:e.id, monthKey, date:e.date, name:e.name, amount:numberValue(e.amount), scope:e.scope || "ALL", note:e.note || ""}));
   const byBranch = {};
   activeBranches().forEach(b=>byBranch[b.id]=0);
   allocations.forEach(a=>byBranch[a.branchId]=(byBranch[a.branchId]||0)+numberValue(a.allocatedAmount));
@@ -1057,7 +1116,7 @@ function bindDaily(){
   $("#addExpenseBtn").onclick = ()=>addExpenseRow();
   $("#addDessertBtn").onclick = ()=>addDessertRow();
   $("#otEnabled").onchange = ()=>{ $("#otFields").classList.toggle("hidden", !$("#otEnabled").checked); recalcDaily(); };
-  $("#dailyForm").oninput = (e)=>{ if(e.target.matches(".calc-money") || e.target.type==="checkbox") recalcDaily(); };
+  $("#dailyForm").oninput = (e)=>{ if(e.target.matches(".calc-money") || e.target.type==="checkbox") scheduleDailyRecalc(); };
   $("#saveDraftDailyBtn").onclick = saveDailyDraft;
   $("#dailyForm").onsubmit = saveDaily;
   refreshDailyWorkers();
@@ -1071,11 +1130,17 @@ async function loadDailyMissingSalesWarning(){
   const box = $("#previousSalesWarn");
   if(!box) return;
   const date = previousDayISO();
-  const branches = visibleBranches();
+  // v1.3.9: สาขา “ออกบูธ” เป็นสาขาพิเศษ เปิดเฉพาะบางวัน จึงไม่ต้องนับเป็นสาขาที่ต้องลงยอด/หยุดร้านย้อนหลัง
+  const branches = visibleBranches().filter(b=>b.id !== "booth");
+  if(!branches.length){ box.innerHTML = ""; return; }
   try{
-    const snaps = await Promise.all(branches.map(b=>getDoc(doc(appState.db, "dailySales", `${b.id}_${date}`))));
-    const missing = branches.filter((b,i)=>!snaps[i].exists());
-    box.innerHTML = missing.length ? `<div class="state warn"><b>เตือนยอดขายเมื่อวาน (${thaiDate(date)}) ยังไม่ครบ</b><br>ยังไม่ได้ลงข้อมูลหรือกดหยุดร้าน: ${missing.map(b=>escapeHtml(b.name)).join(", ")}<br>กรุณาย้อนกลับไปเลือกวันที่เมื่อวาน แล้วบันทึกยอดขายหรือเลือก “หยุดร้านวันนี้” ให้ครบทุกสาขา</div>` : "";
+    const key = `dailySales:missing:${date}:${branches.map(b=>b.id).join("|")}`;
+    const missingIds = await cachedRows(key, async()=>{
+      const snaps = await Promise.all(branches.map(b=>getDoc(doc(appState.db, "dailySales", `${b.id}_${date}`))));
+      return branches.filter((b,i)=>!snaps[i].exists()).map(b=>b.id);
+    }, 20 * 1000);
+    const missing = branches.filter(b=>missingIds.includes(b.id));
+    box.innerHTML = missing.length ? `<div class="state warn"><b>เตือนยอดขายเมื่อวาน (${thaiDate(date)}) ยังไม่ครบ</b><br>ยังไม่ได้ลงข้อมูลหรือกดหยุดร้าน: ${missing.map(b=>escapeHtml(b.name)).join(", ")}<br>กรุณาย้อนกลับไปเลือกวันที่เมื่อวาน แล้วบันทึกยอดขายหรือเลือก “หยุดร้านวันนี้” ให้ครบทุกสาขาที่เปิดประจำ</div>` : "";
   }catch(e){ console.warn(e); box.innerHTML = ""; }
 }
 function refreshDailyWorkers(selected=[]){
@@ -1102,7 +1167,7 @@ function addExpenseRow(row={}){
     <div class="field"><label>หมายเหตุ</label><div class="flex"><input class="exp-note" value="${escapeHtml(row.note||"")}" placeholder="-"><button type="button" class="btn ghost small write-action remove-row">ลบ</button></div></div>`;
   $("#expensesBox").appendChild(div);
   $(".remove-row", div).onclick = ()=>{ div.remove(); recalcDaily(); };
-  div.oninput = recalcDaily;
+  div.oninput = scheduleDailyRecalc;
   updateOnlineUi();
 }
 function addDessertRow(row={}){
@@ -1124,7 +1189,7 @@ function addDessertRow(row={}){
     $(".dessert-name", div).innerHTML = `<option value="">ยังไม่มีชนิดขนมในระบบ</option>`;
   }
   $(".remove-row", div).onclick = ()=>{ div.remove(); recalcDaily(); };
-  div.oninput = recalcDaily;
+  div.oninput = scheduleDailyRecalc;
   $(".dessert-name", div).onchange = recalcDaily;
   updateOnlineUi();
 }
@@ -1237,9 +1302,9 @@ async function loadPreviousOpeningDefaults(options={}){
   const date = $("#dailyDate").value;
   if(!branchId || !date) return;
   try{
-    const snap = await getDocs(query(collection(appState.db, "dailySales"), where("branchId", "==", branchId)));
+    const rows = await getSalesRowsForBranchCached(branchId);
     if(options.token && options.token !== appState.dailyLoadToken) return;
-    const prev = snap.docs.map(d=>d.data()).filter(r=>r.date < date && !r.closed).sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+    const prev = rows.filter(r=>r.date < date && !r.closed).sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
     if(prev){
       if(options.force || !$("#cashOpen").value) $("#cashOpen").value = numberValue(prev.cashClose);
       if(options.force || !$("#prevCupRemain").value) $("#prevCupRemain").value = numberValue(prev.cupsRemain);
@@ -1349,6 +1414,9 @@ async function saveDaily(e){
   for(const dessert of data.desserts){ batch.set(doc(appState.db, "dessertOT", `${id}_${dessert.id}`), {...dessert, dailySalesId:id, branchId:data.branchId, date:data.date, monthKey:data.monthKey, otWorkerIds:data.otWorkerIds, dessertPayTotal:(dessert.price*dessert.qty*dessert.percent/100), updatedAt:serverTimestamp()}); }
   batch.delete(doc(appState.db, "dailyDrafts", id));
   await batch.commit();
+  clearCache("dailySales:");
+  clearCache("comp:");
+  clearCache("ownerExpenses:");
   await audit(before ? "แก้ไขยอดขาย" : "เพิ่มยอดขาย", {date:data.date, branch:branchName(data.branchId)}, before, data);
   await afterWrite("daily_sales");
   showToast(data.closed ? "บันทึกหยุดร้านแล้ว และล้างข้อมูลยอดของวันนั้นแล้ว" : "บันทึกยอดขายสำเร็จ");
@@ -1668,6 +1736,9 @@ async function saveAttendance(e){
   const id = `${appState.currentUser.id}_${date}`;
   const before = await getDoc(doc(appState.db, "attendance", id));
   await setDoc(doc(appState.db, "attendance", id), data, {merge:true});
+  clearCache("attendance:");
+  clearCache("comp:");
+  clearCache("ownerExpenses:");
   await audit("เช็คชื่อ", {date, status, rendo:data.rendoPartTime || false}, before.exists()?before.data():null, data);
   showToast("บันทึกเช็คชื่อสำเร็จ");
   await afterWrite("attendance");
@@ -1689,8 +1760,11 @@ function missingAttendanceDates(monthKey, rows){
 async function loadAttendanceResult(){
   const monthKey=$("#attMonth").value, userId=$("#attUser").value;
   const user = appState.users.find(u=>u.id===userId) || appState.currentUser;
-  const snap = await getDocs(query(collection(appState.db, "attendance"), where("monthKey","==",monthKey)));
-  const rows = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(r=>r.userId===userId).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const monthRows = await cachedRows(`attendance:month:${monthKey}`, async()=>{
+    const snap = await getDocs(query(collection(appState.db, "attendance"), where("monthKey","==",monthKey)));
+    return snap.docs.map(d=>({id:d.id, ...d.data()}));
+  });
+  const rows = monthRows.filter(r=>r.userId===userId).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
   const count = status => rows.filter(r=>r.status===status).length;
   const isDailyUser = user.role === "daily";
   const isNongkhai = isNongkhaiUser(user);
@@ -1775,8 +1849,10 @@ function addOwnerTemplateRow(row={}){
 async function loadOwnerTemplatesIntoForm(){
   const box = $("#ownerTemplateRows");
   box.innerHTML = `<div class="loading">กำลังโหลดรายจ่ายประจำ...</div>`;
-  const snap = await getDocs(collection(appState.db, "ownerExpenseTemplates"));
-  const rows = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(x=>x.active!==false).sort((a,b)=>String(a.name).localeCompare(String(b.name),"th"));
+  const rows = (await cachedRows("ownerExpenses:templates", async()=>{
+    const snap = await getDocs(collection(appState.db, "ownerExpenseTemplates"));
+    return snap.docs.map(d=>({id:d.id, ...d.data()}));
+  })).filter(x=>x.active!==false).sort((a,b)=>String(a.name).localeCompare(String(b.name),"th"));
   box.innerHTML = "";
   rows.length ? rows.forEach(addOwnerTemplateRow) : addOwnerTemplateRow({name:"", amount:"", scope:"ALL"});
 }
@@ -1791,6 +1867,7 @@ async function saveOwnerExpenseTemplates(){
   before.forEach(old=>{ if(!rows.some(r=>r.id===old.id)) batch.set(doc(appState.db,"ownerExpenseTemplates",old.id), {...old, active:false, updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id}, {merge:true}); });
   rows.forEach(r=>batch.set(doc(appState.db,"ownerExpenseTemplates",r.id), {...r, updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id}, {merge:true}));
   await batch.commit();
+  clearCache("ownerExpenses:");
   await audit("ตั้งค่ารายจ่ายประจำ", {}, before, rows);
   await afterWrite("owner_expense_templates");
   showToast("บันทึกรายจ่ายประจำแล้ว");
@@ -1803,6 +1880,7 @@ async function saveOwnerExpenseItem(e){
   if(!date || !name || amount<=0) return showToast("กรุณากรอกวันที่ รายการ และจำนวนเงินให้ถูกต้อง");
   const data = {date, monthKey:monthOf(date), name, amount, scope, note, createdAt:serverTimestamp(), createdAtISO:new Date().toISOString(), createdBy:appState.currentUser.id, createdByName:appState.currentUser.name};
   const ref = await addDoc(collection(appState.db, "ownerExpenses"), data);
+  clearCache("ownerExpenses:");
   await audit("ลงรายจ่ายเจ้าของ", {date, name, amount, scope:expenseScopeLabel(scope)}, null, {...data, id:ref.id});
   await afterWrite("owner_expense");
   $("#ownerExpName").value=""; $("#ownerExpAmount").value=""; $("#ownerExpNote").value="";
@@ -1815,6 +1893,7 @@ async function deleteOwnerExpense(id){
   const ref = doc(appState.db,"ownerExpenses",id);
   const before = await getDoc(ref);
   await deleteDoc(ref);
+  clearCache("ownerExpenses:");
   await audit("ลบรายจ่ายเจ้าของ", {id}, before.exists()?before.data():null, null);
   await afterWrite("owner_expense_delete");
   showToast("ลบรายจ่ายแล้ว");
@@ -1826,8 +1905,10 @@ async function loadOwnerExpensesResult(){
   if(!box) return;
   box.innerHTML = `<div class="loading">กำลังคำนวณรายจ่ายเจ้าของ...</div>`;
   const res = await computeOwnerExpenseAllocationsForMonth(monthKey);
-  const expSnap = await getDocs(query(collection(appState.db,"ownerExpenses"), where("monthKey","==",monthKey)));
-  const manual = expSnap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const manual = (await cachedRows(`ownerExpenses:month:${monthKey}`, async()=>{
+    const expSnap = await getDocs(query(collection(appState.db,"ownerExpenses"), where("monthKey","==",monthKey)));
+    return expSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  })).slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)));
   const byBranchRows = activeBranches().map(b=>`<tr><td>${escapeHtml(b.name)}</td><td class="money">${money(res.salesByBranch[b.id])}</td><td class="money">${money(res.byBranch[b.id])}</td></tr>`).join("");
   const payrollRows = res.directItems.filter(x=>x.kind==="payroll").map(x=>`<tr><td>${escapeHtml(x.name)}</td><td>${escapeHtml(x.note||"")}</td><td>${expenseScopeLabel(x.scope)}</td><td class="money">${money(x.amount)}</td></tr>`).join("");
   const recurringRows = res.directItems.filter(x=>x.kind==="recurring").map(x=>`<tr><td>${escapeHtml(x.name)}</td><td>${escapeHtml(x.note||"")}</td><td>${expenseScopeLabel(x.scope)}</td><td class="money">${money(x.amount)}</td></tr>`).join("");
@@ -1888,6 +1969,9 @@ async function saveAdvance(e){
   if(!date) return showToast("กรุณาเลือกวันที่");
   if(!data.amount) return showToast("กรุณากรอกจำนวนเงิน");
   await addDoc(collection(appState.db, "salaryAdvances"), data);
+  clearCache("salaryAdvances:");
+  clearCache("comp:");
+  clearCache("ownerExpenses:");
   await audit("เพิ่มเงินเบิกล่วงหน้า", {user:data.userName, amount:data.amount}, null, data);
   await afterWrite("advance");
   showToast("บันทึกเงินเบิกล่วงหน้าสำเร็จ");
@@ -1906,6 +1990,9 @@ async function deleteAdvance(id){
   if(!canDeleteAdvance(row)) return showToast("ลบได้เฉพาะรายการของตัวเองเท่านั้น");
   if(!confirm(`ยืนยันลบรายการเบิกเงิน ${money(row.amount)} บาท ของ ${row.userName || userName(row.userId)} ใช่ไหม?`)) return;
   await deleteDoc(doc(appState.db, "salaryAdvances", id));
+  clearCache("salaryAdvances:");
+  clearCache("comp:");
+  clearCache("ownerExpenses:");
   await audit("ลบเงินเบิกล่วงหน้า", {user:row.userName || userName(row.userId), amount:row.amount, date:row.date}, row, null);
   await afterWrite("advance_delete");
   showToast("ลบรายการเบิกเงินแล้ว");
@@ -1914,8 +2001,10 @@ async function deleteAdvance(id){
 async function loadAdvances(){
   const monthKey=$("#advanceMonth").value;
   const adminMode = isOwnerOrManager();
-  const snap = await getDocs(query(collection(appState.db, "salaryAdvances"), where("monthKey","==",monthKey)));
-  let rows = snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  let rows = (await cachedRows(`salaryAdvances:month:${monthKey}`, async()=>{
+    const snap = await getDocs(query(collection(appState.db, "salaryAdvances"), where("monthKey","==",monthKey)));
+    return snap.docs.map(d=>({id:d.id, ...d.data()}));
+  })).slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)));
   if(!adminMode) rows = rows.filter(r=>r.userId === appState.currentUser.id || r.createdBy === appState.currentUser.id);
   const totals = {};
   rows.forEach(r=>totals[r.userId]=(totals[r.userId]||0)+numberValue(r.amount));
@@ -1994,9 +2083,12 @@ async function loadCompensation(){
     const per = workers.length ? calculateDessertPayTotalForSale(r) / workers.length : 0;
     workers.forEach(id => dessertOT[id] = (dessertOT[id] || 0) + per);
   });
-  const attSnap = await getDocs(query(collection(appState.db, "attendance"), where("monthKey","==",monthKey)));
+  const compAttendanceRows = await cachedRows(`attendance:month:${monthKey}`, async()=>{
+    const attSnap = await getDocs(query(collection(appState.db, "attendance"), where("monthKey","==",monthKey)));
+    return attSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  });
   const dailyWages = {}, rendoOT = {};
-  attSnap.docs.map(d=>d.data()).forEach(r=>{
+  compAttendanceRows.forEach(r=>{
     const u = appState.users.find(x=>x.id===r.userId);
     if(u?.role === "daily"){
       if(!dailyWages[r.userId]) dailyWages[r.userId] = {full:0, hourly:0, total:0};
@@ -2007,17 +2099,26 @@ async function loadCompensation(){
     }
     if(r.rendoPartTime) rendoOT[r.userId] = (rendoOT[r.userId] || 0) + calcRendoPartTimePay(r);
   });
-  const advSnap = await getDocs(query(collection(appState.db, "salaryAdvances"), where("monthKey","==",monthKey)));
+  const compAdvanceRows = await cachedRows(`salaryAdvances:month:${monthKey}`, async()=>{
+    const advSnap = await getDocs(query(collection(appState.db, "salaryAdvances"), where("monthKey","==",monthKey)));
+    return advSnap.docs.map(d=>({id:d.id, ...d.data()}));
+  });
   const advances = {};
-  advSnap.docs.map(d=>d.data()).forEach(r=>advances[r.userId]=(advances[r.userId]||0)+numberValue(r.amount));
-  const [compSnap, prevCompSnap] = await Promise.all([
-    getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",monthKey))),
-    getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",previousMonthKey(monthKey))))
+  compAdvanceRows.forEach(r=>advances[r.userId]=(advances[r.userId]||0)+numberValue(r.amount));
+  const [compRows, prevCompRows] = await Promise.all([
+    cachedRows(`comp:records:${monthKey}`, async()=>{
+      const compSnap = await getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",monthKey)));
+      return compSnap.docs.map(d=>({id:d.id, ...d.data()}));
+    }),
+    cachedRows(`comp:records:${previousMonthKey(monthKey)}`, async()=>{
+      const prevCompSnap = await getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",previousMonthKey(monthKey))));
+      return prevCompSnap.docs.map(d=>({id:d.id, ...d.data()}));
+    })
   ]);
   const records = {};
-  compSnap.docs.forEach(d=>records[d.data().userId]=({id:d.id, ...d.data()}));
+  compRows.forEach(r=>records[r.userId]=r);
   const prevRecords = {};
-  prevCompSnap.docs.forEach(d=>prevRecords[d.data().userId]=({id:d.id, ...d.data()}));
+  prevCompRows.forEach(r=>prevRecords[r.userId]=r);
 
   const regularTable = regularPayUsers.length ? `<div class="table-wrap"><table>
     <thead><tr>
@@ -2283,6 +2384,8 @@ async function saveCompRow(row, monthKey){
   const ref = doc(appState.db, "compensationRecords", id);
   const before = await getDoc(ref);
   await setDoc(ref, data, {merge:true});
+  clearCache("comp:");
+  clearCache("ownerExpenses:");
   await audit("แก้ค่าตอบแทน", {monthKey, user:d.userName}, before.exists()?before.data():null, data);
   await afterWrite("compensation");
   showToast(`บันทึกค่าตอบแทนของ ${d.userName} แล้ว`);
@@ -2481,7 +2584,7 @@ async function testBackupUrl(){
   if(!url) return showToast("กรุณากรอก URL ก่อน");
   const testUrl = `${url}${url.includes("?") ? "&" : "?"}action=test&source=love_matcha_sales_app&ts=${Date.now()}`;
   window.open(testUrl, "_blank", "noopener,noreferrer");
-  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.3.8 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
+  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.3.9 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
 }
 async function exportAllSalesCsv(){
   const snap = await getDocs(collection(appState.db, "dailySales"));
@@ -2494,7 +2597,7 @@ async function handleRestoreFile(){
   const lower = file.name.toLowerCase();
   if(!lower.endsWith(".json")){
     appState.restorePreview = null;
-    $("#restorePreview").innerHTML = `<div class="state error">v1.3.8 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
+    $("#restorePreview").innerHTML = `<div class="state error">v1.3.9 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
     $("#restoreBtn").disabled = true;
     return;
   }
@@ -2836,6 +2939,7 @@ async function updateSettings(settings, action="ตั้งค่าระบ�
   const before = safeClone(appState.settings);
   appState.settings = mergeDeep(clone(DEFAULT_SETTINGS), settings);
   await setDoc(doc(appState.db, "appSettings", "main"), {...appState.settings, updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id}, {merge:true});
+  clearCache();
   await audit(action, {}, before, safeClone(appState.settings));
   applyTheme();
   await afterWrite("settings");
@@ -2855,6 +2959,7 @@ async function saveBranchesSettings(){
   const updated = $$(".branch-setting").map(row=>({id:row.dataset.id, name:$(".branch-name",row).value.trim(), order:numberValue($(".branch-order",row).value), active:$(".branch-active",row).checked}));
   updated.forEach(b=>batch.set(doc(appState.db, "branches", b.id), {...b, updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id}, {merge:true}));
   await batch.commit();
+  clearCache();
   await audit("ตั้งค่าสาขา", {}, before, updated);
   await loadBaseData();
   await afterWrite("branches");

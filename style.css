@@ -205,7 +205,7 @@ body.is-offline #pageContent textarea{
   .sales-table tr.closed-short-row td[colspan]::before{content:"สรุป"}
 }
 
-/* v1.3.8: หน้า ยอดขาย / รายเดือน ให้ใช้มือถือจอแคบง่ายขึ้น */
+/* v1.3.9: หน้า ยอดขาย / รายเดือน ให้ใช้มือถือจอแคบง่ายขึ้น */
 .daily-panel{box-shadow:0 6px 20px rgba(24,42,16,.055)}
 .daily-panel-head{background:linear-gradient(135deg,#ffffff,#f5f9f1)}
 .daily-section{position:relative;overflow:hidden}
@@ -255,7 +255,7 @@ body.is-offline #pageContent textarea{
   .monthly-detail-toolbar .btn{width:100%}
 }
 
-/* v1.3.8: หน้ายอดขายกรอกง่ายขึ้น - ไม่ล็อกแถบเดือน/วันที่/สาขาไว้บนจอ */
+/* v1.3.9: หน้ายอดขายกรอกง่ายขึ้น - ไม่ล็อกแถบเดือน/วันที่/สาขาไว้บนจอ */
 .daily-form-wide{max-width:1320px;margin:0 auto}
 .daily-control-panel{position:static!important;top:auto!important;z-index:auto!important;margin-bottom:10px;padding:12px 14px;background:linear-gradient(135deg,#ffffff,#f7fbf2)}
 .daily-control-panel h3{margin-bottom:10px}
@@ -279,7 +279,7 @@ body.is-offline #pageContent textarea{
 }
 @media(max-width:380px){.daily-control-grid{grid-template-columns:1fr}}
 
-/* v1.3.8: หน้าค่าตอบแทนตัดคำอธิบายยาว ให้พื้นที่ตารางมากขึ้น */
+/* v1.3.9: หน้าค่าตอบแทนตัดคำอธิบายยาว ให้พื้นที่ตารางมากขึ้น */
 .comp-filter-panel,.compact-panel{padding:12px;margin:10px 0}
 .compact-panel h3{margin-bottom:8px}
 .compact-grid{align-items:end}
@@ -289,7 +289,7 @@ body.is-offline #pageContent textarea{
 }
 
 
-/* v1.3.8: หน้ายอดขายสีชัดขึ้น + ช่องกรอกกระชับสำหรับมือถือจอแคบ */
+/* v1.3.9: หน้ายอดขายสีชัดขึ้น + ช่องกรอกกระชับสำหรับมือถือจอแคบ */
 .daily-panel{box-shadow:0 8px 22px rgba(24,42,16,.075)}
 .daily-control-panel{background:linear-gradient(135deg,#f1f8ea,#e8f2df);border-color:#c8dac0}
 .staff-section{background:#edf7e4;border-color:#c8dac0}
@@ -318,7 +318,7 @@ body.is-offline #pageContent textarea{
 .daily-form-wide .btn.small{padding:7px 9px}
 .expense-row{background:rgba(255,255,255,.72);border-color:#dec78f}
 
-/* v1.3.8: รายละเอียดรายเดือนเป็นตารางคู่ ซ้าย-ขวา เลื่อนแนวนอนได้ */
+/* v1.3.9: รายละเอียดรายเดือนเป็นตารางคู่ ซ้าย-ขวา เลื่อนแนวนอนได้ */
 .monthly-simple-table{min-width:660px}
 .monthly-detail-cell{background:#f1f5ea!important;padding:10px!important;white-space:normal!important}
 .monthly-detail-card{background:#edf4e6;border:1px solid #c8dac0;border-radius:18px;padding:10px;box-shadow:0 6px 18px rgba(24,42,16,.06)}
@@ -381,7 +381,7 @@ body.is-offline #pageContent textarea{
 }
 
 
-/* v1.3.8: รายเดือน - ล็อกตารางหลักไม่ให้ถูกแถวรายละเอียดดันกว้างขึ้น */
+/* v1.3.9: รายเดือน - ล็อกตารางหลักไม่ให้ถูกแถวรายละเอียดดันกว้างขึ้น */
 .monthly-simple-wrap{width:100%;max-width:100%;overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch}
 .monthly-simple-table{table-layout:fixed!important;width:100%;min-width:705px!important}
 .monthly-simple-table .monthly-col-date{width:100px}
@@ -425,7 +425,7 @@ body.is-offline #pageContent textarea{
   .detail-table-card{flex-basis:265px;width:265px;min-width:265px;max-width:265px}
 }
 
-/* v1.3.8: Dashboard / ลงรายจ่าย / Rendo */
+/* v1.3.9: Dashboard / ลงรายจ่าย / Rendo */
 .grid.four{grid-template-columns:repeat(4,minmax(0,1fr))}
 .branch-check-grid{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:6px}
 .dashboard-filter-panel .btn{align-self:end}
