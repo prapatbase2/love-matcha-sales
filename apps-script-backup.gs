@@ -1,5 +1,5 @@
 /*
-  Love Matcha Sales Backup Web App v1.4.0 — JSON only
+  Love Matcha Sales Backup Web App v1.4.1 — JSON only
 
   ใช้แทน Code.gs ใน Google Apps Script ทั้งไฟล์
   หน้าที่:
@@ -13,7 +13,7 @@
   3) Who has access: Anyone
 */
 
-const BACKUP_APP_VERSION = 'Love Matcha Sales Backup v1.4.0';
+const BACKUP_APP_VERSION = 'Love Matcha Sales Backup v1.4.1';
 const BACKUP_FOLDER_NAME = 'LoveMatcha_Backups';
 
 // ถ้ามีโฟลเดอร์ LoveMatcha_Backups ซ้ำหลายอัน ให้ใส่ Folder ID ของโฟลเดอร์ที่ต้องการไว้ตรงนี้

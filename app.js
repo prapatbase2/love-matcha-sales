@@ -6,7 +6,7 @@ import {
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const VERSION = "v1.4.0";
+const VERSION = "v1.4.1";
 const DEFAULT_BACKUP_URL = "https://script.google.com/macros/s/AKfycbz7pwTBSDwVwja4ugxvlJoNYb4ksBk7METKzGd3bCARUzea99Sx0BTAJHIDi5N2iW7e/exec";
 const COLLECTIONS = [
   "users","branches","dailySales","dailyDrafts","dailyExpenses","cupCounts","dessertOT",
@@ -146,6 +146,29 @@ function requireOnline(){
   }
   return true;
 }
+function loadExternalScript(src, globalName){
+  if(globalName && window[globalName]) return Promise.resolve(window[globalName]);
+  if(loadExternalScript.promises[src]) return loadExternalScript.promises[src];
+  loadExternalScript.promises[src] = new Promise((resolve, reject)=>{
+    const existing = [...document.scripts].find(s=>s.src === src);
+    const finish = ()=> globalName ? resolve(window[globalName]) : resolve(true);
+    if(existing){ existing.addEventListener("load", finish, {once:true}); existing.addEventListener("error", reject, {once:true}); return; }
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.onload = finish;
+    script.onerror = ()=> reject(new Error(`โหลดไฟล์เสริมไม่สำเร็จ: ${src}`));
+    document.head.appendChild(script);
+  });
+  return loadExternalScript.promises[src];
+}
+loadExternalScript.promises = {};
+function ensureChart(){
+  return loadExternalScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js", "Chart");
+}
+function ensureHtml2Pdf(){
+  return loadExternalScript("https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js", "html2pdf");
+}
 function requireRole(roles){
   return appState.currentUser && roles.includes(appState.currentUser.role);
 }
@@ -252,7 +275,7 @@ async function start(){
     renderOpenByServerHelp();
     return;
   }
-  if(!("serviceWorker" in navigator) === false){
+  if("serviceWorker" in navigator){
     try { await navigator.serviceWorker.register("./sw.js"); } catch(e){ console.warn("SW", e); }
   }
   if(!firebaseConfigReady(window.LOVE_MATCHA_FIREBASE_CONFIG)){
@@ -445,7 +468,7 @@ async function afterWrite(actionName){
   if(!appState.settings?.autoBackup) return;
   const mode = appState.settings.autoBackup.mode || "off";
   if(mode === "onAction" || mode === "both"){
-    // v1.4.0: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
+    // v1.4.1: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
     setTimeout(()=>performBackup(`auto_${actionName}`, true).catch(e=>console.warn("auto backup", e)), 0);
   }
 }
@@ -610,8 +633,8 @@ function addToBranchMap(target, addition, factor=1){
   return target;
 }
 async function getSalesForDateRange(startISO, endISO, branchIds=null){
-  const snap = await getDocs(collection(appState.db, "dailySales"));
-  let rows = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(r=>String(r.date || "") >= startISO && String(r.date || "") <= endISO);
+  const snap = await getDocs(query(collection(appState.db, "dailySales"), where("date", ">=", startISO), where("date", "<=", endISO), orderBy("date", "asc")));
+  let rows = snap.docs.map(d=>({id:d.id, ...d.data()}));
   if(Array.isArray(branchIds) && branchIds.length) rows = rows.filter(r=>branchIds.includes(r.branchId));
   else rows = rows.filter(r=>isOwnerOrManager() || canSeeBranch(r.branchId));
   return rows.sort((a,b)=>String(a.date).localeCompare(String(b.date)) || String(a.branchId).localeCompare(String(b.branchId)));
@@ -771,34 +794,6 @@ function salesTable(rows, options={}){
       ${showDetails?`<tr class="monthly-detail-row hidden" data-detail="${i}"><td colspan="9" class="monthly-detail-cell">${monthlySalesDetailHtml(r)}</td></tr>`:""}`;
     }).join("")}</tbody></table></div>`;
 }
-){
-  if(!rows.length) return `<div class="empty">ยังไม่มีข้อมูล</div>`;
-  const showDetails = !!options.details;
-  return `<div class="table-wrap sales-table-wrap"><table class="sales-table">
-    <thead><tr><th>วันที่</th><th>สาขา</th><th>สถานะ</th><th class="money">รายได้รวมทั้งหมด</th><th class="money">ค่านม</th><th class="money">รายจ่ายอื่น</th><th class="money">เงินสดขาด/เกิน</th><th>หมายเหตุ</th>${showDetails?`<th>รายละเอียด</th>`:""}</tr></thead>
-    <tbody>${rows.map((r,i)=>{
-      if(r.closed){
-        const note = r.note ? ` · ${escapeHtml(r.note)}` : "";
-        return `<tr class="sales-main-row closed-short-row">
-          <td data-label="วันที่">${thaiDate(r.date)}</td>
-          <td data-label="สาขา">${escapeHtml(branchName(r.branchId))}</td>
-          <td data-label="สถานะ"><span class="pill warn">หยุดร้าน</span></td>
-          <td data-label="สรุป" colspan="${showDetails?6:5}" class="closed-short-cell"><b>หยุดร้าน</b>${note}</td>
-        </tr>`;
-      }
-      return `<tr class="sales-main-row">
-        <td data-label="วันที่">${thaiDate(r.date)}</td><td data-label="สาขา">${escapeHtml(branchName(r.branchId))}</td>
-        <td data-label="สถานะ"><span class="pill ok">เปิดร้าน</span></td>
-        <td data-label="รายได้รวมทั้งหมด" class="money">${money(r.totalAll)}</td>
-        <td data-label="ค่านม" class="money">${money(r.milkCost)}</td>
-        <td data-label="รายจ่ายอื่น" class="money">${money(r.otherExpenseTotal)}</td>
-        <td data-label="เงินสดขาด/เกิน" class="money">${money(r.cashDiff)}</td>
-        <td data-label="หมายเหตุ">${escapeHtml(r.note||"")}</td>
-        ${showDetails?`<td data-label="รายละเอียด"><button type="button" class="btn secondary small monthly-detail-btn" data-detail="${i}">แสดงรายละเอียด</button></td>`:""}
-      </tr>
-      ${showDetails?`<tr class="monthly-detail-row hidden" data-detail="${i}"><td colspan="9" class="monthly-detail-cell">${monthlySalesDetailHtml(r)}</td></tr>`:""}`;
-    }).join("")}</tbody></table></div>`;
-}
 
 function monthlySalesDetailHtml(r){
   const expenses = r.expenses || [];
@@ -888,17 +883,19 @@ function drawBar(canvasId, labels, values, label){
   const el = document.getElementById(canvasId);
   if(!el) return;
   const box = el.parentElement;
-  if(window.Chart){
+  const renderFallback = ()=>{
+    const max = Math.max(...values, 1);
+    box.innerHTML = `<div class="fallback-bars">${labels.map((x,i)=>`<div class="fallback-bar"><b>${escapeHtml(x)}</b><div class="bar"><span style="width:${Math.max(3,(values[i]/max)*100)}%"></span></div><span>${money(values[i])}</span></div>`).join("")}</div>`;
+  };
+  ensureChart().then(()=>{
+    if(!document.getElementById(canvasId) || !window.Chart) return renderFallback();
     if(appState.charts[canvasId]) appState.charts[canvasId].destroy();
     appState.charts[canvasId] = new Chart(el, {
       type:"bar",
       data:{labels, datasets:[{label, data:values}]},
       options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}}}
     });
-  }else{
-    const max = Math.max(...values, 1);
-    box.innerHTML = `<div class="fallback-bars">${labels.map((x,i)=>`<div class="fallback-bar"><b>${escapeHtml(x)}</b><div class="bar"><span style="width:${Math.max(3,(values[i]/max)*100)}%"></span></div><span>${money(values[i])}</span></div>`).join("")}</div>`;
-  }
+  }).catch(renderFallback);
 }
 
 async function renderDaily(){
@@ -2183,6 +2180,7 @@ async function makeCompPdfFile(d){
   const el = $("#compPdfSheet");
   const filename = `LoveMatcha_ค่าตอบแทน_${safeFileName(d.userName)}_${d.monthKey}.pdf`;
   if(!el) throw new Error("ไม่พบหน้ารายละเอียด PDF");
+  if(!window.html2pdf) await ensureHtml2Pdf();
   if(!window.html2pdf) throw new Error("ยังโหลดตัวสร้าง PDF ไม่สำเร็จ กรุณาเช็กอินเทอร์เน็ตแล้วลองใหม่");
   const worker = window.html2pdf().set({margin:[8,8,8,8], filename, image:{type:"jpeg", quality:0.98}, html2canvas:{scale:2, useCORS:true, backgroundColor:"#ffffff"}, jsPDF:{unit:"mm", format:"a4", orientation:"portrait"}}).from(el);
   const blob = await worker.outputPdf("blob");
@@ -2409,7 +2407,7 @@ async function testBackupUrl(){
   if(!url) return showToast("กรุณากรอก URL ก่อน");
   const testUrl = `${url}${url.includes("?") ? "&" : "?"}action=test&source=love_matcha_sales_app&ts=${Date.now()}`;
   window.open(testUrl, "_blank", "noopener,noreferrer");
-  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.4.0 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
+  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.4.1 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
 }
 async function exportAllSalesCsv(){
   const snap = await getDocs(collection(appState.db, "dailySales"));
@@ -2422,7 +2420,7 @@ async function handleRestoreFile(){
   const lower = file.name.toLowerCase();
   if(!lower.endsWith(".json")){
     appState.restorePreview = null;
-    $("#restorePreview").innerHTML = `<div class="state error">v1.4.0 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
+    $("#restorePreview").innerHTML = `<div class="state error">v1.4.1 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
     $("#restoreBtn").disabled = true;
     return;
   }
