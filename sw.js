@@ -1,4 +1,4 @@
-const CACHE_NAME = "love-matcha-sales-v1.4.1-speed-fix";
+const CACHE_NAME = "love-matcha-sales-v1.3.8-daily-darker-2col-monthly-detail";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -12,6 +12,8 @@ const APP_SHELL = [
   "./icons/apple-touch-icon.png",
   "./icons/favicon-32.png",
   "./icons/favicon-16.png",
+  "https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js",
+  "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js",
   "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js",
   "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js",
   "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js"
