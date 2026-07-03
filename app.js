@@ -6,7 +6,7 @@ import {
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const VERSION = "v1.4.0";
+const VERSION = "v1.4.1";
 const DEFAULT_BACKUP_URL = "https://script.google.com/macros/s/AKfycbz7pwTBSDwVwja4ugxvlJoNYb4ksBk7METKzGd3bCARUzea99Sx0BTAJHIDi5N2iW7e/exec";
 const COLLECTIONS = [
   "users","branches","dailySales","dailyDrafts","dailyExpenses","cupCounts","dessertOT",
@@ -171,7 +171,9 @@ function rendoPartTimePaySettings(){
 }
 function branchName(id){ return appState.branches.find(b=>b.id===id)?.name || id || "-"; }
 function userName(id){ return appState.users.find(u=>u.id===id)?.name || id || "-"; }
-function activeBranches(){ return appState.branches.filter(b=>b.active).sort((a,b)=>(a.order||0)-(b.order||0)); }
+function isDeletedBranch(b){ return b?.deleted === true; }
+function activeBranches(){ return appState.branches.filter(b=>b.active !== false && !isDeletedBranch(b)).sort((a,b)=>(a.order||0)-(b.order||0)); }
+function normalizeBranchName(name){ return String(name || "").trim().toLowerCase().replace(/\s+/g, " "); }
 function visibleBranches(user=appState.currentUser){
   const branches = activeBranches();
   if(!user) return [];
@@ -451,7 +453,7 @@ async function afterWrite(actionName){
   if(!appState.settings?.autoBackup) return;
   const mode = appState.settings.autoBackup.mode || "off";
   if(mode === "onAction" || mode === "both"){
-    // v1.4.0: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
+    // v1.4.1: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
     setTimeout(()=>performBackup(`auto_${actionName}`, true).catch(e=>console.warn("auto backup", e)), 0);
   }
 }
@@ -604,12 +606,60 @@ function allocationShares(amount, branchIds, salesByBranch){
 function addAlloc(target, alloc, factor=1){
   Object.entries(alloc || {}).forEach(([id,amt])=>target[id]=(target[id]||0)+numberValue(amt)*factor);
 }
-async function salesByBranchForMonth(monthKey, branchIds=activeBranches().map(b=>b.id)){
-  const rows = await getSalesForMonth(monthKey, "ALL", {allBranches:true});
+async function salesRowsForMonthAll(monthKey){
+  return getSalesForMonth(monthKey, "ALL", {allBranches:true});
+}
+function salesByBranchFromRows(rows, branchIds=activeBranches().map(b=>b.id)){
   const out = {};
   branchIds.forEach(id=>out[id]=0);
-  rows.filter(r=>!r.closed).forEach(r=>out[r.branchId]=(out[r.branchId]||0)+numberValue(r.totalAll));
+  (rows || []).filter(r=>!r.closed).forEach(r=>out[r.branchId]=(out[r.branchId]||0)+numberValue(r.totalAll));
   return out;
+}
+async function salesByBranchForMonth(monthKey, branchIds=activeBranches().map(b=>b.id)){
+  return salesByBranchFromRows(await salesRowsForMonthAll(monthKey), branchIds);
+}
+function assignedBranchIdsForUser(user, activeIds){
+  const ids = user?.branchIds || [];
+  if(ids.includes("ALL")) return activeIds;
+  const filtered = ids.filter(id=>activeIds.includes(id));
+  return filtered.length ? filtered : activeIds;
+}
+function equalAllocation(amount, ids){
+  const out = {};
+  const list = (ids || []).filter(Boolean);
+  if(!list.length) return out;
+  list.forEach(id=>out[id]=(out[id]||0)+amount/list.length);
+  return out;
+}
+function workDayAllocation(amount, userId, allowedIds, monthRows){
+  const counts = {};
+  (monthRows || []).filter(r=>!r.closed && allowedIds.includes(r.branchId) && (r.workerIds || []).includes(userId)).forEach(r=>{
+    const key = `${r.branchId}_${r.date || ""}`;
+    if(!workDayAllocation._seen) workDayAllocation._seen = new Set();
+    if(workDayAllocation._seen.has(key + "_" + userId)) return;
+    workDayAllocation._seen.add(key + "_" + userId);
+    counts[r.branchId] = (counts[r.branchId] || 0) + 1;
+  });
+  workDayAllocation._seen = null;
+  const workedIds = Object.keys(counts).filter(id=>counts[id] > 0);
+  if(!workedIds.length) return equalAllocation(amount, allowedIds);
+  const total = workedIds.reduce((s,id)=>s+counts[id],0) || workedIds.length;
+  const out = {};
+  workedIds.forEach(id=>out[id] = amount * counts[id] / total);
+  return out;
+}
+function compensationAllocation(amount, user, monthRows, activeIds, salesBy){
+  if(!activeIds.length) return {};
+  const assignedIds = assignedBranchIdsForUser(user, activeIds);
+  if(!assignedIds.length) return {};
+  if(assignedIds.length <= 1) return {[assignedIds[0]]: amount};
+  if((user?.branchIds || []).includes("ALL") || assignedIds.length === activeIds.length){
+    return allocationShares(amount, activeIds, salesBy);
+  }
+  return workDayAllocation(amount, user?.id, assignedIds, monthRows);
+}
+function ownerExpenseBranchIds(row, activeIds){
+  return row.allocationMode === "branch" && row.branchId ? [row.branchId] : activeIds;
 }
 async function getOwnerExpenseAllocationForRange(startISO, endISO, selectedBranchIds=selectableBranchIds()){
   const months = monthKeysBetween(startISO, endISO);
@@ -622,28 +672,26 @@ async function getOwnerExpenseAllocationForRange(startISO, endISO, selectedBranc
   for(const monthKey of months){
     const factor = overlapDaysInMonth(monthKey, startISO, endISO) / daysInMonthKey(monthKey);
     if(factor <= 0) continue;
-    const salesBy = await salesByBranchForMonth(monthKey, activeIds);
+    const monthRows = await salesRowsForMonthAll(monthKey);
+    const salesBy = salesByBranchFromRows(monthRows, activeIds);
     const compSnap = await getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",monthKey)));
     compSnap.docs.forEach(docSnap=>{
       const r = {id:docSnap.id, ...docSnap.data()};
-      const user = appState.users.find(u=>u.id===r.userId) || {};
-      let ids = (user.branchIds || []).includes("ALL") ? activeIds : (user.branchIds || []).filter(id=>activeIds.includes(id));
-      if(!ids.length && r.branchId) ids = [r.branchId];
-      if(!ids.length) ids = activeIds;
+      const user = appState.users.find(u=>u.id===r.userId) || {id:r.userId, branchIds:r.branchIds || []};
       const amount = numberValue(r.totalCost);
-      const alloc = allocationShares(amount, ids, salesBy);
+      const alloc = compensationAllocation(amount, user, monthRows, activeIds, salesBy);
       addAlloc(byBranch, alloc, factor);
       details.push({source:"comp", monthKey, name:`ค่าตอบแทน ${r.userName || userName(r.userId)}`, amount:amount*factor, allocation:alloc, prorateFactor:factor});
     });
     expenseRows.filter(r=>r.type === "recurring" && r.active !== false).forEach(r=>{
-      const ids = r.allocationMode === "branch" ? [r.branchId] : activeIds;
+      const ids = ownerExpenseBranchIds(r, activeIds);
       const amount = numberValue(r.amount);
       const alloc = allocationShares(amount, ids, salesBy);
       addAlloc(byBranch, alloc, factor);
       details.push({source:"recurring", monthKey, name:r.name, amount:amount*factor, allocation:alloc, prorateFactor:factor, id:r.id});
     });
     expenseRows.filter(r=>r.type === "oneoff" && r.monthKey === monthKey && String(r.date || "") >= startISO && String(r.date || "") <= endISO).forEach(r=>{
-      const ids = r.allocationMode === "branch" ? [r.branchId] : activeIds;
+      const ids = ownerExpenseBranchIds(r, activeIds);
       const amount = numberValue(r.amount);
       const alloc = allocationShares(amount, ids, salesBy);
       addAlloc(byBranch, alloc, 1);
@@ -706,8 +754,9 @@ async function loadDashboardResult(){
   ]);
   const ag = aggregateSales(rows);
   const saleExpenses = ag.milk + ag.expense;
+  const estimatedIngredientGrossProfit = ag.totalAll / 2;
   const ownerExpenseTotal = numberValue(ownerExpense.selectedTotal);
-  const netAfterExpenses = ag.totalAll - saleExpenses - ownerExpenseTotal;
+  const netAfterExpenses = estimatedIngredientGrossProfit - saleExpenses - ownerExpenseTotal;
   const latest = rows.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)) || String(a.branchId).localeCompare(String(b.branchId))).slice(0,12);
   const branchExpenseRows = branchIds.map(id=>({id, name:branchName(id), sales:aggregateSales(rows.filter(r=>r.branchId===id)).totalAll, ownerExpense:numberValue(ownerExpense.byBranch[id])}));
   box.innerHTML = `
@@ -717,7 +766,7 @@ async function loadDashboardResult(){
       {label:"รายจ่ายเจ้าของลง", value:`${money(ownerExpenseTotal)} บาท`, sub:"รวมรายจ่ายประจำ/รายจ่ายอื่น/ค่าตอบแทนที่จัดสรรแล้ว"},
       {label:"เอาเงินสดให้เจ้าของ", value:`${money(ag.ownerCashOut)} บาท`},
       {label:"จำนวนแก้วที่ใช้รวม", value:`${money(ag.cupsUsed)} ใบ`},
-      {label:"รายได้หลังหักค่าใช้จ่าย", value:`${money(netAfterExpenses)} บาท`, sub:"รายได้รวม - รายจ่ายขาย - รายจ่ายเจ้าของลง"}
+      {label:"รายได้หลังหักค่าใช้จ่าย", value:`${money(netAfterExpenses)} บาท`, sub:"สมมติต้นทุนวัตถุดิบ 50%: (รายได้รวม/2) - รายจ่ายขาย - รายจ่ายเจ้าของลง"}
     ])}
     <div class="panel">
       <div class="flex"><h3>กราฟเปรียบเทียบรายได้ตามสาขา</h3><span class="pill muted">${branchIds.length} สาขา</span></div>
@@ -1456,7 +1505,7 @@ async function loadPersonalResult(){
 }
 function rendoTimeOptions(selected=""){
   const out=[];
-  for(let minutes=18*60; minutes<=22*60; minutes+=30){
+  for(let minutes=18*60; minutes<=24*60; minutes+=30){
     const h = Math.floor(minutes/60), m = minutes%60;
     const v = `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
     out.push(`<option value="${v}" ${selected===v?"selected":""}>${v}</option>`);
@@ -1468,6 +1517,11 @@ function calcRendoPartTimeHours(r){
   return Math.max(0, (minutesFromTime(r.rendoEndTime)-minutesFromTime(r.rendoStartTime)) / 60);
 }
 function calcRendoPartTimePay(r){ return calcRendoPartTimeHours(r) * rendoPartTimePaySettings().hourAmount; }
+function isLekUser(user){
+  const id = normalizeBranchName(user?.id || "");
+  const name = normalizeBranchName(user?.name || "");
+  return id === "lek" || name === "lek" || name === "พี่ lek" || name === "คุณ lek";
+}
 function missingAttendanceDates(monthKey, rows){
   const rowDates = new Set(rows.map(r=>r.date));
   const today = todayISO();
@@ -1562,7 +1616,7 @@ function attendanceFormHtml(){
         <div class="field"><label>เริ่มพาร์ทไทม์ Rendo</label><select id="rendoStartTime">${rendoTimeOptions("18:00")}</select></div>
         <div class="field"><label>เลิกพาร์ทไทม์ Rendo</label><select id="rendoEndTime">${rendoTimeOptions("22:00")}</select></div>
       </div>
-      <small>เลือกเวลาได้ทีละครึ่งชั่วโมง ตั้งแต่ 18:00-22:00</small>
+      <small>เฉพาะสาขาหนองคาย เลือกเวลาได้ทีละครึ่งชั่วโมง ตั้งแต่ 18:00-24:00</small>
     </div>` : ""}
     <div class="sticky-save"><button class="btn full write-action">บันทึกเช็คชื่อ</button></div>
   </form>`;
@@ -1608,8 +1662,9 @@ async function loadAttendanceResult(){
   const count = status => rows.filter(r=>r.status===status).length;
   const isDailyUser = user.role === "daily";
   const hasRendo = isNongkhaiUser(user);
-  const missing = missingAttendanceDates(monthKey, rows);
-  const missingHtml = missing.length ? `<div class="state warn"><b>ยังไม่ได้เช็คชื่อวันที่:</b> ${missing.map(d=>String(Number(d.slice(8,10)))).join(", ")}</div>` : `<div class="state ok">เช็คชื่อครบตามวันที่ผ่านมาแล้ว</div>`;
+  const skipMissingWarning = isLekUser(user);
+  const missing = skipMissingWarning ? [] : missingAttendanceDates(monthKey, rows);
+  const missingHtml = skipMissingWarning ? "" : (missing.length ? `<div class="state warn"><b>ยังไม่ได้เช็คชื่อวันที่:</b> ${missing.map(d=>String(Number(d.slice(8,10)))).join(", ")}</div>` : `<div class="state ok">เช็คชื่อครบตามวันที่ผ่านมาแล้ว</div>`);
   const tableHtml = isDailyUser
     ? (rows.length ? `<div class="table-wrap"><table class="mobile-card-table"><thead><tr><th>วันที่</th><th>สถานะ</th><th>รูปแบบ</th><th>เวลา</th>${hasRendo?`<th>พาร์ทไทม์ Rendo</th>`:""}</tr></thead><tbody>${rows.map(r=>`<tr><td data-label="วันที่">${thaiDate(r.date)}</td><td data-label="สถานะ">${escapeHtml(r.status)}</td><td data-label="รูปแบบ">${r.workType==="hourly"?"รายชั่วโมง":(r.workType==="full"?"ทั้งวัน":"-")}</td><td data-label="เวลา">${r.workType==="hourly"?`${escapeHtml(r.startTime)}-${escapeHtml(r.endTime)}`:"-"}</td>${hasRendo?`<td data-label="พาร์ทไทม์ Rendo">${r.rendoPartTime?`${escapeHtml(r.rendoStartTime)}-${escapeHtml(r.rendoEndTime)} (${money(calcRendoPartTimeHours(r))} ชม.)`:"-"}</td>`:""}</tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีข้อมูล</div>`)
     : (rows.length ? `<div class="table-wrap"><table class="mobile-card-table"><thead><tr><th>วันที่</th><th>สถานะ</th><th>เหตุผล</th>${hasRendo?`<th>พาร์ทไทม์ Rendo</th>`:""}</tr></thead><tbody>${rows.map(r=>`<tr><td data-label="วันที่">${thaiDate(r.date)}</td><td data-label="สถานะ">${escapeHtml(r.status)}</td><td data-label="เหตุผล">${escapeHtml(r.reason||"")}</td>${hasRendo?`<td data-label="พาร์ทไทม์ Rendo">${r.rendoPartTime?`${escapeHtml(r.rendoStartTime)}-${escapeHtml(r.rendoEndTime)} (${money(calcRendoPartTimeHours(r))} ชม.)`:"-"}</td>`:""}</tr>`).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีข้อมูล</div>`);
@@ -1738,17 +1793,34 @@ async function renderOwnerExpenses(){
   $("#ownerExpMonth").onchange = loadOwnerExpenses;
   await loadOwnerExpenses();
 }
-function ownerExpenseAllocationOptions(selected="all"){
-  return `<option value="all" ${selected==="all"?"selected":""}>รวมทุกสาขา (กระจายตาม % ยอดขาย)</option><option value="branch" ${selected==="branch"?"selected":""}>ระบุสาขาเดียว</option>`;
+function ownerExpenseTargetValue(row={}){ return row.allocationMode === "branch" && row.branchId ? row.branchId : "ALL"; }
+function ownerExpenseTargetOptions(selected="ALL"){
+  const active = activeBranches();
+  const opts = [`<option value="ALL" ${selected==="ALL"?"selected":""}>รวมทุกสาขา (กระจายตาม % ยอดขาย)</option>`];
+  active.forEach(b=>opts.push(`<option value="${b.id}" ${selected===b.id?"selected":""}>${escapeHtml(b.name)}</option>`));
+  return opts.join("");
+}
+function ownerExpenseTargetData(value){
+  return value === "ALL" ? {allocationMode:"all", branchId:""} : {allocationMode:"branch", branchId:value};
+}
+function compensationAllocationLabel(user, monthRows, activeIds){
+  const ids = assignedBranchIdsForUser(user, activeIds);
+  if(ids.length <= 1) return escapeHtml(branchName(ids[0]));
+  if((user?.branchIds || []).includes("ALL") || ids.length === activeIds.length) return `รวมทุกสาขา · กระจายตาม % ยอดขาย`;
+  const counts = {};
+  (monthRows || []).filter(r=>!r.closed && ids.includes(r.branchId) && (r.workerIds || []).includes(user.id)).forEach(r=>counts[r.branchId]=(counts[r.branchId]||0)+1);
+  const worked = Object.entries(counts).filter(([,c])=>c>0).map(([id,c])=>`${escapeHtml(branchName(id))} ${c} วัน`);
+  return worked.length ? `กระจายตามวันที่ทำงานจริง: ${worked.join(", ")}` : `ยังไม่พบวันที่ทำงานจริง แบ่งเท่ากัน: ${ids.map(id=>escapeHtml(branchName(id))).join(", ")}`;
 }
 async function loadOwnerExpenses(){
   const monthKey = $("#ownerExpMonth").value;
   const start = startOfMonthISO(monthKey), end = endOfMonthISO(monthKey);
   const active = activeBranches();
-  const [alloc, allSnap, compSnap] = await Promise.all([
+  const [alloc, allSnap, compSnap, monthRows] = await Promise.all([
     getOwnerExpenseAllocationForRange(start, end, active.map(b=>b.id)),
     getDocs(collection(appState.db, "ownerExpenses")),
-    getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",monthKey)))
+    getDocs(query(collection(appState.db, "compensationRecords"), where("monthKey","==",monthKey))),
+    salesRowsForMonthAll(monthKey)
   ]);
   const allRows = allSnap.docs.map(d=>({id:d.id, ...d.data()}));
   const recurring = allRows.filter(r=>r.type==="recurring" && r.active !== false).sort((a,b)=>String(a.name).localeCompare(String(b.name),"th"));
@@ -1769,18 +1841,17 @@ async function loadOwnerExpenses(){
     <div class="panel">
       <h3>รายจ่ายประจำอัตโนมัติจากค่าตอบแทน</h3>
       <div class="state warn">ถ้ายังไม่ได้กดบันทึกในหน้าค่าตอบแทน ระบบจะยังไม่ดึงต้นทุนของคนนั้นมาเป็นรายจ่ายประจำ</div>
-      ${compRows.length ? `<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th>ระดับ</th><th class="money">ต้นทุนรวม</th><th>การกระจาย</th></tr></thead><tbody>${compRows.map(r=>{ const u=appState.users.find(x=>x.id===r.userId)||{}; const ids=(u.branchIds||[]).includes("ALL")?active.map(b=>b.id):(u.branchIds||[]); return `<tr><td>${escapeHtml(r.userName||userName(r.userId))}</td><td>${roleBadge(r.role)}</td><td class="money">${money(r.totalCost)}</td><td>${ids.length>1?`กระจายตาม % ยอดขาย: ${ids.map(branchName).join(", ")}`:escapeHtml(branchName(ids[0]))}</td></tr>`; }).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีรายการค่าตอบแทนที่บันทึกในเดือนนี้</div>`}
+      ${compRows.length ? `<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th>ระดับ</th><th class="money">ต้นทุนรวม</th><th>การกระจาย</th></tr></thead><tbody>${compRows.map(r=>{ const u=appState.users.find(x=>x.id===r.userId)||{id:r.userId, branchIds:r.branchIds||[]}; return `<tr><td>${escapeHtml(r.userName||userName(r.userId))}</td><td>${roleBadge(r.role)}</td><td class="money">${money(r.totalCost)}</td><td>${compensationAllocationLabel(u, monthRows, active.map(b=>b.id))}</td></tr>`; }).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีรายการค่าตอบแทนที่บันทึกในเดือนนี้</div>`}
     </div>
     <form id="recurringExpenseForm" class="panel">
       <h3>เพิ่มรายจ่ายประจำ</h3>
       <div class="grid three compact-grid">
         <div class="field"><label>ชื่อรายจ่าย</label><input id="recName" placeholder="เช่น ค่าเช่า / ค่าเน็ต / ค่าบัญชี"></div>
         <div class="field"><label>จำนวนเงิน/เดือน</label><input id="recAmount" inputmode="decimal" placeholder="0"></div>
-        <div class="field"><label>เป็นของ</label><select id="recAllocation">${ownerExpenseAllocationOptions()}</select></div>
-        <div class="field"><label>สาขา</label><select id="recBranch">${active.map(b=>`<option value="${b.id}">${escapeHtml(b.name)}</option>`).join("")}</select><small>ใช้เมื่อเลือก “ระบุสาขาเดียว”</small></div>
+        <div class="field"><label>เป็นของ</label><select id="recTarget">${ownerExpenseTargetOptions("ALL")}</select></div>
         <div class="field"><label>&nbsp;</label><button class="btn write-action">บันทึกรายจ่ายประจำ</button></div>
       </div>
-      ${recurring.length ? `<div class="table-wrap"><table><thead><tr><th>รายการประจำ</th><th class="money">จำนวน</th><th>เป็นของ</th><th>สาขา</th><th>จัดการ</th></tr></thead><tbody>${recurring.map(r=>`<tr class="owner-exp-edit-row" data-id="${r.id}" data-type="recurring"><td><input class="oe-name" value="${escapeHtml(r.name)}"></td><td><input class="oe-amount wide-money" inputmode="decimal" value="${numberValue(r.amount)}"></td><td><select class="oe-allocation">${ownerExpenseAllocationOptions(r.allocationMode || "all")}</select></td><td><select class="oe-branch">${active.map(b=>`<option value="${b.id}" ${r.branchId===b.id?"selected":""}>${escapeHtml(b.name)}</option>`).join("")}</select></td><td><div class="row-actions"><button type="button" class="btn small save-owner-exp write-action" data-id="${r.id}">บันทึกแก้ไข</button><button type="button" class="btn ghost small delete-owner-exp write-action" data-id="${r.id}">ลบ</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty compact">ยังไม่มีรายจ่ายประจำที่เพิ่มเอง</div>`}
+      ${recurring.length ? `<div class="table-wrap"><table><thead><tr><th>รายการประจำ</th><th class="money">จำนวน</th><th>เป็นของ</th><th>จัดการ</th></tr></thead><tbody>${recurring.map(r=>`<tr class="owner-exp-edit-row" data-id="${r.id}" data-type="recurring"><td><input class="oe-name" value="${escapeHtml(r.name)}"></td><td><input class="oe-amount wide-money" inputmode="decimal" value="${numberValue(r.amount)}"></td><td><select class="oe-target">${ownerExpenseTargetOptions(ownerExpenseTargetValue(r))}</select></td><td><div class="row-actions"><button type="button" class="btn small save-owner-exp write-action" data-id="${r.id}">บันทึกแก้ไข</button><button type="button" class="btn ghost small delete-owner-exp write-action" data-id="${r.id}">ลบ</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty compact">ยังไม่มีรายจ่ายประจำที่เพิ่มเอง</div>`}
     </form>
     <form id="oneoffExpenseForm" class="panel">
       <h3>เพิ่มรายจ่ายอื่น ๆ</h3>
@@ -1788,12 +1859,11 @@ async function loadOwnerExpenses(){
         <div class="field"><label>วันที่</label><input id="oneDate" type="date" value="${todayISO().slice(0,7)===monthKey?todayISO():start}"></div>
         <div class="field"><label>ชื่อรายจ่าย</label><input id="oneName" placeholder="เช่น ซื้อของ / ซ่อมอุปกรณ์"></div>
         <div class="field"><label>จำนวนเงิน</label><input id="oneAmount" inputmode="decimal" placeholder="0"></div>
-        <div class="field"><label>เป็นของ</label><select id="oneAllocation">${ownerExpenseAllocationOptions()}</select></div>
-        <div class="field"><label>สาขา</label><select id="oneBranch">${active.map(b=>`<option value="${b.id}">${escapeHtml(b.name)}</option>`).join("")}</select><small>ใช้เมื่อเลือก “ระบุสาขาเดียว”</small></div>
+        <div class="field"><label>เป็นของ</label><select id="oneTarget">${ownerExpenseTargetOptions("ALL")}</select></div>
         <div class="field"><label>หมายเหตุ</label><input id="oneNote"></div>
         <div class="field"><label>&nbsp;</label><button class="btn write-action">บันทึกรายจ่ายอื่น</button></div>
       </div>
-      ${oneoffs.length ? `<div class="table-wrap"><table><thead><tr><th>วันที่</th><th>รายการ</th><th class="money">จำนวน</th><th>เป็นของ</th><th>สาขา</th><th>หมายเหตุ</th><th>จัดการ</th></tr></thead><tbody>${oneoffs.map(r=>`<tr class="owner-exp-edit-row" data-id="${r.id}" data-type="oneoff"><td><input class="oe-date" type="date" value="${escapeHtml(r.date)}"></td><td><input class="oe-name" value="${escapeHtml(r.name)}"></td><td><input class="oe-amount wide-money" inputmode="decimal" value="${numberValue(r.amount)}"></td><td><select class="oe-allocation">${ownerExpenseAllocationOptions(r.allocationMode || "all")}</select></td><td><select class="oe-branch">${active.map(b=>`<option value="${b.id}" ${r.branchId===b.id?"selected":""}>${escapeHtml(b.name)}</option>`).join("")}</select></td><td><input class="oe-note" value="${escapeHtml(r.note||"")}"></td><td><div class="row-actions"><button type="button" class="btn small save-owner-exp write-action" data-id="${r.id}">บันทึกแก้ไข</button><button type="button" class="btn ghost small delete-owner-exp write-action" data-id="${r.id}">ลบ</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty compact">ยังไม่มีรายจ่ายอื่นในเดือนนี้</div>`}
+      ${oneoffs.length ? `<div class="table-wrap"><table><thead><tr><th>วันที่</th><th>รายการ</th><th class="money">จำนวน</th><th>เป็นของ</th><th>หมายเหตุ</th><th>จัดการ</th></tr></thead><tbody>${oneoffs.map(r=>`<tr class="owner-exp-edit-row" data-id="${r.id}" data-type="oneoff"><td><input class="oe-date" type="date" value="${escapeHtml(r.date)}"></td><td><input class="oe-name" value="${escapeHtml(r.name)}"></td><td><input class="oe-amount wide-money" inputmode="decimal" value="${numberValue(r.amount)}"></td><td><select class="oe-target">${ownerExpenseTargetOptions(ownerExpenseTargetValue(r))}</select></td><td><input class="oe-note" value="${escapeHtml(r.note||"")}"></td><td><div class="row-actions"><button type="button" class="btn small save-owner-exp write-action" data-id="${r.id}">บันทึกแก้ไข</button><button type="button" class="btn ghost small delete-owner-exp write-action" data-id="${r.id}">ลบ</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty compact">ยังไม่มีรายจ่ายอื่นในเดือนนี้</div>`}
     </form>`;
   $("#recurringExpenseForm").onsubmit = saveRecurringExpense;
   $("#oneoffExpenseForm").onsubmit = saveOneoffExpense;
@@ -1804,7 +1874,8 @@ async function loadOwnerExpenses(){
 async function saveRecurringExpense(e){
   e.preventDefault();
   if(!requireOnline()) return;
-  const data = {type:"recurring", name:$("#recName").value.trim(), amount:numberValue($("#recAmount").value), allocationMode:$("#recAllocation").value, branchId:$("#recBranch").value, active:true, createdAt:serverTimestamp(), createdBy:appState.currentUser.id, createdByName:appState.currentUser.name};
+  const target = ownerExpenseTargetData($("#recTarget").value);
+  const data = {type:"recurring", name:$("#recName").value.trim(), amount:numberValue($("#recAmount").value), ...target, active:true, createdAt:serverTimestamp(), createdBy:appState.currentUser.id, createdByName:appState.currentUser.name};
   if(!data.name || data.amount <= 0) return showToast("กรุณากรอกชื่อและจำนวนรายจ่ายประจำ");
   await addDoc(collection(appState.db, "ownerExpenses"), data);
   await audit("เพิ่มรายจ่ายประจำ", {name:data.name, amount:data.amount}, null, data);
@@ -1816,7 +1887,8 @@ async function saveOneoffExpense(e){
   e.preventDefault();
   if(!requireOnline()) return;
   const date = $("#oneDate").value;
-  const data = {type:"oneoff", date, monthKey:monthOf(date), name:$("#oneName").value.trim(), amount:numberValue($("#oneAmount").value), allocationMode:$("#oneAllocation").value, branchId:$("#oneBranch").value, note:$("#oneNote").value.trim(), createdAt:serverTimestamp(), createdBy:appState.currentUser.id, createdByName:appState.currentUser.name};
+  const target = ownerExpenseTargetData($("#oneTarget").value);
+  const data = {type:"oneoff", date, monthKey:monthOf(date), name:$("#oneName").value.trim(), amount:numberValue($("#oneAmount").value), ...target, note:$("#oneNote").value.trim(), createdAt:serverTimestamp(), createdBy:appState.currentUser.id, createdByName:appState.currentUser.name};
   if(!date || !data.name || data.amount <= 0) return showToast("กรุณากรอกวันที่ ชื่อ และจำนวนรายจ่ายอื่น");
   await addDoc(collection(appState.db, "ownerExpenses"), data);
   await audit("เพิ่มรายจ่ายเจ้าของลง", {date, name:data.name, amount:data.amount}, null, data);
@@ -1832,11 +1904,11 @@ async function updateOwnerExpense(row){
   const before = await getDoc(ref);
   if(!before.exists()) return showToast("ไม่พบรายการรายจ่าย");
   const type = row.dataset.type || before.data().type;
+  const target = ownerExpenseTargetData($(".oe-target", row).value);
   const data = {
     name:$(".oe-name", row).value.trim(),
     amount:numberValue($(".oe-amount", row).value),
-    allocationMode:$(".oe-allocation", row).value,
-    branchId:$(".oe-branch", row).value,
+    ...target,
     updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id, updatedByName:appState.currentUser.name
   };
   if(type === "oneoff"){
@@ -2048,7 +2120,6 @@ async function loadCompensation(){
   $("#compResult").innerHTML = `
     <div class="panel">
       <h3>ตารางค่าตอบแทนหัวหน้างาน/พนักงาน ${thaiMonth(monthKey)}</h3>
-      <div class="state ok">ตารางนี้ตัดช่องค่าจ้างรายวันออกแล้ว เพื่อให้สั้นและอ่านง่ายขึ้น · เงินเดือนจะลอกจากเดือนก่อนหน้าให้อัตโนมัติเมื่อเดือนนี้ยังไม่เคยบันทึก</div>
       ${regularTable}
     </div>
     <div class="panel">
@@ -2157,22 +2228,25 @@ function buildCompPdfHtml(d){
   const madeAt = `${thaiDate(d.createdAt.toISOString().slice(0,10))} ${String(d.createdAt.getHours()).padStart(2,"0")}:${String(d.createdAt.getMinutes()).padStart(2,"0")}`;
   const item = (name, amount, note="") => `<tr><td>${escapeHtml(name)}${note?`<div class="pdf-note">${escapeHtml(note)}</div>`:""}</td><td class="pdf-money">${money(amount)}</td></tr>`;
   const dailyWageRows = d.isDaily ? `
-      ${item("ค่าจ้างวันที่ทำงานทั้งวัน", d.dailyFullPaidAlready ? 0 : d.dailyFullWageBeforeExclude, d.dailyFullPaidAlready ? `ได้รับแล้ว จึงไม่นำยอดเดิม ${money(d.dailyFullWageBeforeExclude)} บาทมาคำนวณ` : "")}
-      ${item("ค่าจ้างวันที่ทำงานรายชั่วโมง", d.dailyHourlyPaidAlready ? 0 : d.dailyHourlyWageBeforeExclude, d.dailyHourlyPaidAlready ? `ได้รับแล้ว จึงไม่นำยอดเดิม ${money(d.dailyHourlyWageBeforeExclude)} บาทมาคำนวณ` : "")}
-      ${item("ค่าจ้างรายวันที่นำมาคำนวณ", d.salary)}` : item("เงินเดือน", d.salary);
-  return `<div class="pdf-document">
+      ${item("ค่าจ้างทั้งวัน", d.dailyFullPaidAlready ? 0 : d.dailyFullWageBeforeExclude, d.dailyFullPaidAlready ? `ได้รับแล้ว ไม่นำยอดเดิม ${money(d.dailyFullWageBeforeExclude)} บาทมาคำนวณซ้ำ` : "")}
+      ${item("ค่าจ้างรายชั่วโมง", d.dailyHourlyPaidAlready ? 0 : d.dailyHourlyWageBeforeExclude, d.dailyHourlyPaidAlready ? `ได้รับแล้ว ไม่นำยอดเดิม ${money(d.dailyHourlyWageBeforeExclude)} บาทมาคำนวณซ้ำ` : "")}
+      ${item("ค่าจ้างที่นำมาคำนวณ", d.salary)}` : item("เงินเดือน", d.salary);
+  const employeeSSRow = !d.isDaily ? item("ประกันสังคมฝ่ายลูกจ้าง", -Math.abs(d.employeeSS)) : "";
+  const ownerCostRows = !d.isDaily ? `${item("ประกันสังคมนายจ้าง", d.employerSS)}${item("ต้นทุนรวม+ปกส.", d.totalCost)}` : item("ต้นทุนรวม", d.totalCost);
+  return `<div class="pdf-document pdf-one-page">
     <div class="pdf-header"><img src="${escapeHtml(appState.settings.logoUrl || "./icons/logo.png")}" alt="logo"><div><h1>สรุปค่าตอบแทน</h1><p>${escapeHtml(appState.settings.storeName || "Love Matcha")} · ${thaiMonth(d.monthKey)}</p></div></div>
     <div class="pdf-info-grid"><div><small>ชื่อพนักงาน</small><b>${escapeHtml(d.userName)}</b></div><div><small>ตำแหน่ง</small><b>${escapeHtml(role)}</b></div><div><small>จัดทำโดย</small><b>${escapeHtml(d.createdBy)}</b></div><div><small>วันที่จัดทำ</small><b>${madeAt}</b></div></div>
+    <div class="pdf-summary-grid"><div><small>รวมรายรับก่อนหัก</small><b>${money(d.totalIncome)} บาท</b></div><div><small>ยอดหักรวม</small><b>${money(d.deduction + d.advances + d.employeeSS)} บาท</b></div><div class="pdf-summary-total"><small>ยอดโอนปลายเดือน</small><b>${money(d.netTransfer)} บาท</b></div></div>
     <table class="pdf-table"><thead><tr><th>รายการ</th><th>จำนวนเงิน (บาท)</th></tr></thead><tbody>
       ${dailyWageRows}
       ${item("OT เพิ่มอื่น ๆ", d.otOther, d.otOtherNote)}${item("OT ทำขนม", d.dessertOT)}${item("เงินเพิ่มออกบูธ", d.boothBonus)}${item("OT พาร์ทไทม์ Rendo", d.rendoOT)}
       ${!d.isDaily ? `${item("โบนัสรายวัน", d.dailyBonus)}${item("โบนัสรายเดือน", d.monthlyBonus)}` : ""}
       <tr class="pdf-subtotal"><td>รวมรายรับก่อนหัก</td><td class="pdf-money">${money(d.totalIncome)}</td></tr>
-      ${item("หักเงิน", -Math.abs(d.deduction), d.deductionNote)}${item("เบิกล่วงหน้า", -Math.abs(d.advances))}
-      ${!d.isDaily ? item("ประกันสังคมฝ่ายลูกจ้าง", -Math.abs(d.employeeSS)) : ""}
+      ${item("หักเงิน", -Math.abs(d.deduction), d.deductionNote)}${item("เบิกล่วงหน้า", -Math.abs(d.advances))}${employeeSSRow}
       <tr class="pdf-total"><td>ยอดที่ต้องโอนปลายเดือน</td><td class="pdf-money">${money(d.netTransfer)}</td></tr>
+      ${ownerCostRows}
     </tbody></table>
-    <div class="pdf-note-box"><b>หมายเหตุ</b><br>${d.isDaily ? "รายวันแยกค่าจ้างทั้งวันและรายชั่วโมง หากติ๊กว่าได้รับแล้ว ระบบจะไม่นำยอดส่วนนั้นมาคำนวณซ้ำ" : "ยอดเงินนี้เป็นสรุปสำหรับตรวจสอบก่อนโอนปลายเดือน"}</div>
+    <div class="pdf-note-box"><b>หมายเหตุ</b> ${d.isDaily ? "รายวันแยกค่าจ้างทั้งวันและรายชั่วโมง หากติ๊กว่าได้รับแล้ว ระบบจะไม่นำยอดส่วนนั้นมาคำนวณซ้ำ" : "ยอดโอนปลายเดือนเป็นยอดหลังหักเงิน/เบิกล่วงหน้า/ประกันสังคมฝ่ายลูกจ้าง"}</div>
   </div>`;
 }
 
@@ -2192,13 +2266,25 @@ function openCompPdfDetail(row, monthKey){
   $(".share-comp-pdf", modal).onclick = ()=>shareCompPdf(d);
 }
 async function makeCompPdfFile(d){
-  const el = $("#compPdfSheet");
   const filename = `LoveMatcha_ค่าตอบแทน_${safeFileName(d.userName)}_${d.monthKey}.pdf`;
-  if(!el) throw new Error("ไม่พบหน้ารายละเอียด PDF");
   if(!window.html2pdf) throw new Error("ยังโหลดตัวสร้าง PDF ไม่สำเร็จ กรุณาเช็กอินเทอร์เน็ตแล้วลองใหม่");
-  const worker = window.html2pdf().set({margin:[8,8,8,8], filename, image:{type:"jpeg", quality:0.98}, html2canvas:{scale:2, useCORS:true, backgroundColor:"#ffffff"}, jsPDF:{unit:"mm", format:"a4", orientation:"portrait"}}).from(el);
-  const blob = await worker.outputPdf("blob");
-  return new File([blob], filename, {type:"application/pdf"});
+  const source = document.createElement("div");
+  source.className = "pdf-export-root";
+  source.innerHTML = buildCompPdfHtml(d);
+  document.body.appendChild(source);
+  try{
+    const worker = window.html2pdf().set({
+      margin:[5,5,5,5], filename,
+      image:{type:"jpeg", quality:0.98},
+      pagebreak:{mode:["avoid-all", "css"]},
+      html2canvas:{scale:2, useCORS:true, backgroundColor:"#ffffff", scrollX:0, scrollY:0},
+      jsPDF:{unit:"mm", format:"a4", orientation:"portrait"}
+    }).from(source.firstElementChild);
+    const blob = await worker.outputPdf("blob");
+    return new File([blob], filename, {type:"application/pdf"});
+  } finally {
+    source.remove();
+  }
 }
 async function downloadCompPdf(d){ try{ const file = await makeCompPdfFile(d); const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1500); showToast("สร้างไฟล์ PDF แล้ว สามารถส่งต่อใน LINE ได้"); }catch(e){ showToast(e.message || "สร้าง PDF ไม่สำเร็จ"); } }
 async function shareCompPdf(d){
@@ -2210,6 +2296,7 @@ async function saveCompRow(row, monthKey){
   const d = getCompRowData(row, monthKey);
   const data = {
     userId:d.userId, userName:d.userName, role:d.role, monthKey:d.monthKey, isDaily:d.isDaily,
+    branchIds:(appState.users.find(u=>u.id===d.userId)?.branchIds || []),
     salary:d.salary, dailyWageBeforeExclude:d.dailyWageBeforeExclude,
     dailyFullWageBeforeExclude:d.dailyFullWageBeforeExclude, dailyHourlyWageBeforeExclude:d.dailyHourlyWageBeforeExclude,
     dailyFullPaidAlready:d.dailyFullPaidAlready, dailyHourlyPaidAlready:d.dailyHourlyPaidAlready, dailyPaidAlready:d.dailyPaidAlready,
@@ -2420,7 +2507,7 @@ async function testBackupUrl(){
   if(!url) return showToast("กรุณากรอก URL ก่อน");
   const testUrl = `${url}${url.includes("?") ? "&" : "?"}action=test&source=love_matcha_sales_app&ts=${Date.now()}`;
   window.open(testUrl, "_blank", "noopener,noreferrer");
-  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.4.0 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
+  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.4.1 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
 }
 async function exportAllSalesCsv(){
   const snap = await getDocs(collection(appState.db, "dailySales"));
@@ -2433,7 +2520,7 @@ async function handleRestoreFile(){
   const lower = file.name.toLowerCase();
   if(!lower.endsWith(".json")){
     appState.restorePreview = null;
-    $("#restorePreview").innerHTML = `<div class="state error">v1.4.0 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
+    $("#restorePreview").innerHTML = `<div class="state error">v1.4.1 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
     $("#restoreBtn").disabled = true;
     return;
   }
@@ -2713,11 +2800,12 @@ async function renderSettings(){
     </div>`;
   $("#setLogoFile")?.addEventListener("change", readLogoFile);
   $("#saveVisualSettings").onclick = saveVisualSettings;
-  $("#addBranch").onclick = ()=>{ appState.branches.push({id:uid("branch"), name:"สาขาใหม่", active:true, order:appState.branches.length+1}); $("#branchesSettings").innerHTML = branchSettingRows(); };
+  $("#addBranch").onclick = ()=>{ appState.branches.push({id:uid("branch"), name:"สาขาใหม่", active:true, order:activeBranches().length+1, _new:true}); $("#branchesSettings").innerHTML = branchSettingRows(); bindBranchDeleteButtons(); };
   $("#saveBranches").onclick = saveBranchesSettings;
   $("#saveBonus").onclick = saveDailyBonusSettings;
   $("#saveMonthlyBonus").onclick = saveMonthlyBonusSettings;
   $("#saveAdvanceAccess").onclick = saveAdvanceAccessSettings;
+  bindBranchDeleteButtons();
   updateOnlineUi();
 }
 function advanceAccessRows(){
@@ -2733,11 +2821,40 @@ async function saveAdvanceAccessSettings(){
   showToast("บันทึกสิทธิ์หน้าเบิกเงินแล้ว");
 }
 function branchSettingRows(){
-  return appState.branches.sort((a,b)=>(a.order||0)-(b.order||0)).map((b,i)=>`<div class="grid three branch-setting" data-id="${b.id}">
+  const rows = appState.branches.filter(b=>!isDeletedBranch(b)).sort((a,b)=>(a.order||0)-(b.order||0));
+  return rows.map((b,i)=>`<div class="grid three branch-setting" data-id="${b.id}" data-new="${b._new?"1":"0"}">
     <div class="field"><label>ชื่อสาขา</label><input class="branch-name" value="${escapeHtml(b.name)}"></div>
     <div class="field"><label>ลำดับ</label><input class="branch-order" inputmode="numeric" value="${b.order || i+1}"></div>
     <label class="check-item"><input class="branch-active" type="checkbox" ${b.active!==false?"checked":""}> เปิดใช้งาน</label>
+    ${isOwner()?`<div class="field"><label>&nbsp;</label><button type="button" class="btn danger small delete-branch write-action" data-id="${b.id}">ลบสาขา</button></div>`:""}
   </div>`).join("");
+}
+function bindBranchDeleteButtons(){
+  $$(".delete-branch").forEach(btn=>btn.onclick=()=>deleteBranchFromSettings(btn.dataset.id));
+}
+async function deleteBranchFromSettings(branchId){
+  if(!requireOnline()) return;
+  if(!isOwner()) return showToast("เฉพาะเจ้าของเท่านั้นที่ลบสาขาได้");
+  const b = appState.branches.find(x=>x.id===branchId);
+  if(!b) return showToast("ไม่พบสาขา");
+  if(b._new){
+    appState.branches = appState.branches.filter(x=>x.id!==branchId);
+    $("#branchesSettings").innerHTML = branchSettingRows();
+    bindBranchDeleteButtons();
+    updateOnlineUi();
+    return;
+  }
+  if(activeBranches().filter(x=>x.id!==branchId).length < 1) return showToast("ต้องเหลือสาขาที่ใช้งานอย่างน้อย 1 สาขา");
+  const pin = prompt(`กรอก PIN ของคุณเพื่อยืนยันการลบสาขา ${b.name}`);
+  if(pin !== String(appState.currentUser.pin)) return showToast("PIN ไม่ถูกต้อง");
+  if(!confirm(`ยืนยันลบสาขา ${b.name}? ข้อมูลยอดขาย/รายจ่ายเก่าจะไม่ถูกลบ และจะกลับมาใช้ได้เมื่อสร้างชื่อสาขานี้กลับมา`)) return;
+  const before = safeClone(b);
+  await updateDoc(doc(appState.db, "branches", branchId), {active:false, deleted:true, deletedAt:serverTimestamp(), deletedBy:appState.currentUser.id, updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id});
+  await audit("ลบสาขา", {branch:b.name}, before, {id:branchId, active:false, deleted:true});
+  await loadBaseData();
+  await afterWrite("branch_delete");
+  showToast("ลบสาขาแล้ว ข้อมูลเดิมยังอยู่ในระบบ");
+  renderSettings();
 }
 function dessertSettingRows(){
   return (appState.settings.dessertItems || []).map(x=>`<div class="grid three dessert-setting">
@@ -2790,8 +2907,19 @@ async function saveBranchesSettings(){
   if(!isOwnerOrManager()) return showToast("ไม่มีสิทธิ์");
   const batch = writeBatch(appState.db);
   const before = safeClone(appState.branches);
-  const updated = $$(".branch-setting").map(row=>({id:row.dataset.id, name:$(".branch-name",row).value.trim(), order:numberValue($(".branch-order",row).value), active:$(".branch-active",row).checked}));
-  updated.forEach(b=>batch.set(doc(appState.db, "branches", b.id), {...b, updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id}, {merge:true}));
+  const deletedByName = new Map(appState.branches.filter(isDeletedBranch).map(b=>[normalizeBranchName(b.name), b]));
+  const updated = $$(".branch-setting").map(row=>{
+    const name = $(".branch-name",row).value.trim();
+    let id = row.dataset.id;
+    let revivedFrom = "";
+    if(row.dataset.new === "1"){
+      const old = deletedByName.get(normalizeBranchName(name));
+      if(old){ id = old.id; revivedFrom = old.id; }
+    }
+    return {id, name, order:numberValue($(".branch-order",row).value), active:$(".branch-active",row).checked, deleted:false, revivedFrom};
+  });
+  if(updated.some(b=>!b.name)) return showToast("กรุณากรอกชื่อสาขาให้ครบ");
+  updated.forEach(b=>batch.set(doc(appState.db, "branches", b.id), {id:b.id, name:b.name, order:b.order, active:b.active, deleted:false, updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id}, {merge:true}));
   await batch.commit();
   await audit("ตั้งค่าสาขา", {}, before, updated);
   await loadBaseData();

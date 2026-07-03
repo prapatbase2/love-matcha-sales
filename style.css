@@ -442,3 +442,27 @@ body.is-offline #pageContent textarea{
 @media(max-width:380px){
   .dashboard-filter-panel .grid.three,.compact-grid{grid-template-columns:1fr}
 }
+
+/* v1.4.1: สาขา / รายจ่าย / PDF ค่าตอบแทน */
+.branch-setting .delete-branch{align-self:end}
+.pdf-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0 8px}
+.pdf-summary-grid div{border:1px solid #dce5d5;border-radius:12px;background:#fbfcfa;padding:9px}
+.pdf-summary-grid small{display:block;color:#66725c;font-weight:800;font-size:11px;margin-bottom:2px}
+.pdf-summary-grid b{display:block;color:#17210f;font-size:15px}
+.pdf-summary-grid .pdf-summary-total{background:#eaf8e7;border-color:#cceac7}
+.pdf-summary-grid .pdf-summary-total b{font-size:18px;color:#1f6b22}
+.pdf-one-page{width:100%;max-width:760px}
+.pdf-one-page .pdf-header{padding-bottom:10px;margin-bottom:10px}
+.pdf-one-page .pdf-header img{width:60px;height:60px;border-radius:14px}
+.pdf-one-page .pdf-header h1{font-size:24px}
+.pdf-one-page .pdf-info-grid{gap:8px;margin:8px 0}
+.pdf-one-page .pdf-info-grid div{padding:8px}
+.pdf-one-page .pdf-info-grid b{font-size:14px}
+.pdf-one-page .pdf-table{font-size:13px;margin-top:8px}
+.pdf-one-page .pdf-table th,.pdf-one-page .pdf-table td{padding:6px 8px}
+.pdf-one-page .pdf-total td{font-size:16px}
+.pdf-one-page .pdf-note{font-size:11px;line-height:1.25}
+.pdf-one-page .pdf-note-box{margin-top:8px;padding:9px;font-size:12px}
+.pdf-export-root{position:fixed;left:-10000px;top:0;width:794px;background:#fff;z-index:-1;overflow:visible}
+.pdf-export-root .pdf-one-page{width:794px;max-width:794px;padding:18px;box-shadow:none;border:0;overflow:visible}
+@media(max-width:640px){.pdf-summary-grid{grid-template-columns:1fr}.pdf-sheet .pdf-one-page{width:100%;max-width:760px}.pdf-one-page .pdf-table{font-size:12px}.pdf-one-page .pdf-table th,.pdf-one-page .pdf-table td{padding:6px}}
