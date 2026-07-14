@@ -1,4 +1,6 @@
-# คู่มือติดตั้ง Love Matcha Sales v1.0
+# คู่มือติดตั้ง Love Matcha Sales v1.4.2
+
+> เวอร์ชันปัจจุบันในชุดไฟล์นี้: **v1.4.2**
 
 
 ## อัปเดตแก้ไขล่าสุด
@@ -650,7 +652,7 @@ Love Matcha Sales `v1.0`
    - Backup ไป Google Drive จะสร้างเฉพาะไฟล์ `.json`
    - Restore ในแอปรองรับเฉพาะ `.json`
 
-## วิธีตั้งค่า Google Apps Script Backup v1.4.1 แบบละเอียด
+## วิธีตั้งค่า Google Apps Script Backup v1.4.2 แบบละเอียด
 
 1. เปิดเว็บ `script.google.com`
 2. กด `New project`

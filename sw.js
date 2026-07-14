@@ -1,22 +1,19 @@
-const CACHE_NAME = "love-matcha-sales-v1.4.1-branch-delete-expense-pdf";
+const BUILD_VERSION = "1.4.2";
+const CACHE_NAME = `love-matcha-sales-v${BUILD_VERSION}`;
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css",
-  "./app.js",
-  "./manifest.webmanifest",
+  `./style.css?v=${BUILD_VERSION}`,
+  `./app.js?v=${BUILD_VERSION}`,
+  `./manifest.webmanifest?v=${BUILD_VERSION}`,
+  "./version.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/logo.png",
   "./icons/logo-192.png",
   "./icons/apple-touch-icon.png",
   "./icons/favicon-32.png",
-  "./icons/favicon-16.png",
-  "https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js",
-  "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js",
-  "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js",
-  "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js",
-  "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js"
+  "./icons/favicon-16.png"
 ];
 
 self.addEventListener("install", event => {
@@ -25,29 +22,51 @@ self.addEventListener("install", event => {
 });
 
 self.addEventListener("activate", event => {
-  event.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))
-  );
-  self.clients.claim();
+  event.waitUntil((async()=>{
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)));
+    await self.clients.claim();
+    const clients = await self.clients.matchAll({type:"window", includeUncontrolled:true});
+    await Promise.all(clients.map(async client=>{
+      try{
+        const url = new URL(client.url);
+        if(url.origin !== self.location.origin || url.searchParams.get("appVersion") === BUILD_VERSION) return;
+        url.searchParams.set("appVersion", BUILD_VERSION);
+        await client.navigate(url.href);
+      }catch(_){ }
+    }));
+  })());
 });
 
+self.addEventListener("message", event => {
+  if(event.data === "SKIP_WAITING") self.skipWaiting();
+});
+
+async function networkFirst(request){
+  const cache = await caches.open(CACHE_NAME);
+  try{
+    const response = await fetch(request, {cache:"no-store"});
+    if(response && response.status === 200) cache.put(request, response.clone()).catch(()=>null);
+    return response;
+  }catch(_){
+    return (await cache.match(request)) || (request.mode === "navigate" ? cache.match("./index.html") : Response.error());
+  }
+}
+
+async function cacheFirst(request){
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request);
+  if(cached) return cached;
+  const response = await fetch(request);
+  if(response && response.status === 200) cache.put(request, response.clone()).catch(()=>null);
+  return response;
+}
+
 self.addEventListener("fetch", event => {
-  if (event.request.method !== "GET") return;
+  if(event.request.method !== "GET") return;
   const url = new URL(event.request.url);
-
-  // Firestore/Auth requests are handled by Firebase SDK. Do not cache API writes.
-  if (url.hostname.includes("firestore.googleapis.com") || url.hostname.includes("identitytoolkit.googleapis.com")) return;
-
-  event.respondWith(
-    caches.match(event.request).then(cached => {
-      const network = fetch(event.request).then(response => {
-        if (response && response.status === 200) {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(() => null);
-        }
-        return response;
-      }).catch(() => cached || caches.match("./index.html"));
-      return cached || network;
-    })
-  );
+  if(url.hostname.includes("firestore.googleapis.com") || url.hostname.includes("identitytoolkit.googleapis.com")) return;
+  const isLocal = url.origin === self.location.origin;
+  const isFreshAppFile = isLocal && (event.request.mode === "navigate" || /\.(?:html|js|css|json|webmanifest)$/.test(url.pathname));
+  event.respondWith(isFreshAppFile ? networkFirst(event.request) : cacheFirst(event.request));
 });

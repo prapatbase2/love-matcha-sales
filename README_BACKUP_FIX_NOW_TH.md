@@ -21,7 +21,7 @@
 
 หน้าใหม่ต้องขึ้นประมาณนี้:
 
-- `app`: `Love Matcha Sales Backup v1.4.1`
+- `app`: `Love Matcha Sales Backup v1.4.2`
 - มี `jsonFileName`
 - ไม่มี `sheetName` เพราะ v1.4.1 ยกเลิก Google Sheet/Excel แล้ว
 - มี `folderUrl`

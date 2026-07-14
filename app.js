@@ -6,7 +6,7 @@ import {
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-const VERSION = "v1.4.1";
+const VERSION = "v1.4.2";
 const DEFAULT_BACKUP_URL = "https://script.google.com/macros/s/AKfycbz7pwTBSDwVwja4ugxvlJoNYb4ksBk7METKzGd3bCARUzea99Sx0BTAJHIDi5N2iW7e/exec";
 const COLLECTIONS = [
   "users","branches","dailySales","dailyDrafts","dailyExpenses","cupCounts","dessertOT",
@@ -57,9 +57,9 @@ const DEFAULT_SETTINGS = {
     ]
   },
   dessertItems:[
-    {name:"บราวนี่", price:45, percent:10},
-    {name:"คุกกี้", price:35, percent:10},
-    {name:"เค้ก", price:55, percent:10}
+    {id:"dessert_brownie", name:"บราวนี่", price:45, percent:10, order:1},
+    {id:"dessert_cookie", name:"คุกกี้", price:35, percent:10, order:2},
+    {id:"dessert_cake", name:"เค้ก", price:55, percent:10, order:3}
   ]
 };
 
@@ -184,8 +184,29 @@ function canSeeBranch(branchId){
   return visibleBranches().some(b=>b.id===branchId);
 }
 function roleBadge(role){ return `<span class="badge-role">${ROLE_LABELS[role] || role}</span>`; }
+function stableDessertId(name, index=0){
+  const text = String(name || `dessert-${index+1}`).trim().toLowerCase();
+  let hash = 2166136261;
+  for(const ch of text){ hash ^= ch.charCodeAt(0); hash = Math.imul(hash, 16777619); }
+  return `dessert_${(hash >>> 0).toString(36)}_${index+1}`;
+}
+function dessertItemsSorted(){
+  return (appState.settings.dessertItems || []).slice().sort((a,b)=>numberValue(a.order)-numberValue(b.order) || String(a.name).localeCompare(String(b.name),"th"));
+}
+function dessertItemById(id){
+  return (appState.settings.dessertItems || []).find(x=>x.id === id) || null;
+}
 function dessertItemByName(name){
   return (appState.settings.dessertItems || []).find(x=>x.name === name) || null;
+}
+function dessertItemForRecord(record={}){
+  return dessertItemById(record.itemId) || dessertItemByName(record.name) || null;
+}
+function dessertPayForRecord(record={}){
+  const fallback = dessertItemForRecord(record) || {};
+  const price = record.price !== undefined && record.price !== null ? numberValue(record.price) : numberValue(fallback.price);
+  const percent = record.percent !== undefined && record.percent !== null ? numberValue(record.percent) : numberValue(fallback.percent);
+  return price * numberValue(record.qty) * percent / 100;
 }
 const HIDDEN_HISTORY_ACTIONS = new Set(["ซ่อนประวัติ", "แสดงประวัติกลับ"]);
 const PRIMARY_HISTORY_ACTIONS = ["เพิ่มยอดขาย", "แก้ไขยอดขาย", "เช็คชื่อ"];
@@ -205,6 +226,8 @@ function applyTheme(){
   $("#appTitle").textContent = s.storeName || "Love Matcha";
   $("#appLogo").src = s.logoUrl || "./icons/logo.png";
   $$(".login-logo").forEach(img => img.src = s.logoUrl || "./icons/logo.png");
+  $$(".version").forEach(el=>el.textContent = VERSION);
+  if($("#appSub")) $("#appSub").textContent = VERSION;
 }
 function updateOnlineUi(){
   const pill = $("#onlinePill");
@@ -259,8 +282,18 @@ async function start(){
     renderOpenByServerHelp();
     return;
   }
-  if(!("serviceWorker" in navigator) === false){
-    try { await navigator.serviceWorker.register("./sw.js"); } catch(e){ console.warn("SW", e); }
+  if("serviceWorker" in navigator){
+    try {
+      let controllerReloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", ()=>{
+        if(controllerReloaded) return;
+        controllerReloaded = true;
+        const key = `loveMatcha.controllerReload.${VERSION}`;
+        if(!safeStorageGet(key)){ safeStorageSet(key, "1"); location.reload(); }
+      });
+      const registration = await navigator.serviceWorker.register("./sw.js", {updateViaCache:"none"});
+      registration.update().catch(()=>null);
+    } catch(e){ console.warn("SW", e); }
   }
   if(!firebaseConfigReady(window.LOVE_MATCHA_FIREBASE_CONFIG)){
     $("#loginScreen").classList.add("hidden");
@@ -316,11 +349,19 @@ function mergeDeep(target, source){
 }
 function normalizeSettings(){
   const s = appState.settings || DEFAULT_SETTINGS;
-  s.dessertItems = (s.dessertItems || []).map(x=>({
-    name:String(x.name || "").trim(),
-    price:numberValue(x.price),
-    percent:numberValue(x.percent || 10)
-  })).filter(x=>x.name);
+  const usedDessertIds = new Set();
+  s.dessertItems = (s.dessertItems || []).map((x,index)=>{
+    let id = String(x.id || "").trim() || stableDessertId(x.name, index);
+    while(usedDessertIds.has(id)) id = `${id}_${index+1}`;
+    usedDessertIds.add(id);
+    return {
+      id,
+      name:String(x.name || "").trim(),
+      price:numberValue(x.price),
+      percent:numberValue(x.percent || 10),
+      order:numberValue(x.order) || index + 1
+    };
+  }).filter(x=>x.name).sort((a,b)=>numberValue(a.order)-numberValue(b.order));
   if(!s.dessertItems.length) s.dessertItems = clone(DEFAULT_SETTINGS.dessertItems);
   s.advanceAccessUserIds = Array.isArray(s.advanceAccessUserIds) ? s.advanceAccessUserIds : [];
   const legacyHalfHour = numberValue(s.dailyWorkerPay?.halfHourAmount || 20);
@@ -453,7 +494,7 @@ async function afterWrite(actionName){
   if(!appState.settings?.autoBackup) return;
   const mode = appState.settings.autoBackup.mode || "off";
   if(mode === "onAction" || mode === "both"){
-    // v1.4.1: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
+    // v1.4.2: ไม่รอ backup ให้เสร็จก่อน เพื่อให้ปุ่ม Save / ส่งยอดตอบสนองเร็วขึ้นและไม่กระตุก
     setTimeout(()=>performBackup(`auto_${actionName}`, true).catch(e=>console.warn("auto backup", e)), 0);
   }
 }
@@ -1075,20 +1116,25 @@ function addExpenseRow(row={}){
   updateOnlineUi();
 }
 function addDessertRow(row={}){
-  const items = appState.settings.dessertItems || [];
+  const items = dessertItemsSorted();
   const selectedName = row.name || row.itemName || "";
-  const options = items.map(x=>`<option value="${escapeHtml(x.name)}" ${selectedName===x.name?"selected":""}>${escapeHtml(x.name)}</option>`).join("");
+  const matched = dessertItemById(row.itemId) || dessertItemByName(selectedName);
+  const selectedId = matched?.id || "";
+  const options = items.map(x=>`<option value="${escapeHtml(x.id)}" data-name="${escapeHtml(x.name)}" data-price="${numberValue(x.price)}" data-percent="${numberValue(x.percent)}" ${selectedId===x.id?"selected":""}>${escapeHtml(x.name)}</option>`).join("");
+  const legacyOption = selectedName && !matched
+    ? `<option value="legacy" data-name="${escapeHtml(selectedName)}" data-price="${numberValue(row.price)}" data-percent="${numberValue(row.percent)}" selected>${escapeHtml(selectedName)} (ข้อมูลเดิม)</option>`
+    : "";
   const div = document.createElement("div");
   div.className = "panel dessert-row";
   div.style.margin = "8px 0";
   div.innerHTML = `
     <div class="grid three">
-      <div class="field"><label>ทำขนมอะไร</label><select class="dessert-name"><option value="">เลือกขนม</option>${options}</select></div>
+      <div class="field"><label>ทำขนมอะไร</label><select class="dessert-name"><option value="">เลือกขนม</option>${legacyOption}${options}</select></div>
       <div class="field"><label>กี่ชิ้น / กี่หน่วย</label><input class="dessert-qty calc-money" inputmode="decimal" value="${row.qty ?? ""}" placeholder="0"></div>
       <div class="field"><label>หมายเหตุ</label><div class="flex"><input class="dessert-note" value="${escapeHtml(row.note||"")}" placeholder="-"><button type="button" class="btn ghost small write-action remove-row">ลบ</button></div></div>
     </div>`;
   $("#dessertsBox").appendChild(div);
-  if(!items.length){
+  if(!items.length && !legacyOption){
     $(".dessert-name", div).innerHTML = `<option value="">ยังไม่มีชนิดขนมในระบบ</option>`;
   }
   $(".remove-row", div).onclick = ()=>{ div.remove(); recalcDaily(); };
@@ -1105,9 +1151,15 @@ function collectDailyForm(){
     return {id:r.dataset.id, name:$(".exp-name",r).value.trim(), amount, paidByTransfer, cashAmount:paidByTransfer?0:amount, note:$(".exp-note",r).value.trim()};
   }).filter(x=>x.name || x.amount || x.note);
   const desserts = $$(".dessert-row").map(r=>{
-    const name = $(".dessert-name",r).value.trim();
-    const item = dessertItemByName(name) || {};
-    return {id:uid("dessert"), name, price:numberValue(item.price), qty:numberValue($(".dessert-qty",r).value), percent:numberValue(item.percent), note:$(".dessert-note",r).value.trim()};
+    const select = $(".dessert-name",r);
+    const option = select?.selectedOptions?.[0];
+    const itemId = select?.value && select.value !== "legacy" ? select.value : "";
+    const name = select?.value ? (option?.dataset.name || option?.textContent?.replace(/ \(ข้อมูลเดิม\)$/,"" ).trim() || "") : "";
+    return {
+      id:uid("dessert"), itemId, name,
+      price:numberValue(option?.dataset.price), qty:numberValue($(".dessert-qty",r).value),
+      percent:numberValue(option?.dataset.percent), note:$(".dessert-note",r).value.trim()
+    };
   }).filter(x=>x.name || x.qty || x.note);
   const otWorkerIds = $$(".otWorkerCheck:checked").map(x=>x.value);
   const grossSales = numberValue($("#grossSales").value);
@@ -1812,6 +1864,82 @@ function compensationAllocationLabel(user, monthRows, activeIds){
   const worked = Object.entries(counts).filter(([,c])=>c>0).map(([id,c])=>`${escapeHtml(branchName(id))} ${c} วัน`);
   return worked.length ? `กระจายตามวันที่ทำงานจริง: ${worked.join(", ")}` : `ยังไม่พบวันที่ทำงานจริง แบ่งเท่ากัน: ${ids.map(id=>escapeHtml(branchName(id))).join(", ")}`;
 }
+function safeStorageGet(key, fallback=""){
+  try{ return localStorage.getItem(key) || fallback; }catch(_){ return fallback; }
+}
+function safeStorageSet(key, value){
+  try{ localStorage.setItem(key, value); }catch(_){ }
+}
+function ownerExpenseSortMode(kind){
+  return safeStorageGet(`loveMatcha.ownerExpenseSort.${kind}`, kind === "recurring" ? "target-name" : "date-desc");
+}
+function ownerExpenseTableOrder(){
+  return safeStorageGet("loveMatcha.ownerExpenseTableOrder", "oneoff-first");
+}
+function sortOwnerExpenseRows(rows, kind, mode){
+  const out = rows.slice();
+  const byName = (a,b)=>String(a.name || "").localeCompare(String(b.name || ""),"th");
+  const targetLabel = row => ownerExpenseTargetValue(row) === "ALL" ? "รวมทุกสาขา" : branchName(ownerExpenseTargetValue(row));
+  const byTarget = (a,b)=>String(targetLabel(a)).localeCompare(String(targetLabel(b)),"th") || byName(a,b);
+  const sorters = kind === "recurring" ? {
+    "target-name":byTarget,
+    "name-asc":byName,
+    "amount-desc":(a,b)=>numberValue(b.amount)-numberValue(a.amount) || byName(a,b),
+    "amount-asc":(a,b)=>numberValue(a.amount)-numberValue(b.amount) || byName(a,b)
+  } : {
+    "date-desc":(a,b)=>String(b.date || "").localeCompare(String(a.date || "")) || byName(a,b),
+    "date-asc":(a,b)=>String(a.date || "").localeCompare(String(b.date || "")) || byName(a,b),
+    "amount-desc":(a,b)=>numberValue(b.amount)-numberValue(a.amount) || byName(a,b),
+    "name-asc":byName,
+    "target-name":byTarget
+  };
+  return out.sort(sorters[mode] || Object.values(sorters)[0]);
+}
+function ownerExpenseSortOptions(kind, selected){
+  const options = kind === "recurring" ? [
+    ["target-name","สาขา แล้วตามชื่อ"], ["name-asc","ชื่อ ก-ฮ"], ["amount-desc","จำนวนมากไปน้อย"], ["amount-asc","จำนวนน้อยไปมาก"]
+  ] : [
+    ["date-desc","วันที่ใหม่ไปเก่า"], ["date-asc","วันที่เก่าไปใหม่"], ["amount-desc","จำนวนมากไปน้อย"], ["name-asc","ชื่อ ก-ฮ"], ["target-name","สาขา แล้วตามชื่อ"]
+  ];
+  return options.map(([value,label])=>`<option value="${value}" ${selected===value?"selected":""}>${label}</option>`).join("");
+}
+function sortOwnerExpenseTableDom(kind, mode){
+  const table = document.getElementById(`${kind}ExpenseTable`);
+  const tbody = table?.tBodies?.[0];
+  if(!tbody) return;
+  const rows = [...tbody.rows];
+  const rowName = row => $(".oe-name", row)?.value.trim() || row.dataset.sortName || "";
+  const rowAmount = row => numberValue($(".oe-amount", row)?.value ?? row.dataset.sortAmount);
+  const rowTarget = row => $(".oe-target", row)?.selectedOptions?.[0]?.textContent || row.dataset.sortTarget || "";
+  const rowDate = row => $(".oe-date", row)?.value || row.dataset.sortDate || "";
+  const byName = (a,b)=>String(rowName(a)).localeCompare(String(rowName(b)),"th");
+  const byTarget = (a,b)=>String(rowTarget(a)).localeCompare(String(rowTarget(b)),"th") || byName(a,b);
+  const sorters = kind === "recurring" ? {
+    "target-name":byTarget,
+    "name-asc":byName,
+    "amount-desc":(a,b)=>rowAmount(b)-rowAmount(a) || byName(a,b),
+    "amount-asc":(a,b)=>rowAmount(a)-rowAmount(b) || byName(a,b)
+  } : {
+    "date-desc":(a,b)=>String(rowDate(b)).localeCompare(String(rowDate(a))) || byName(a,b),
+    "date-asc":(a,b)=>String(rowDate(a)).localeCompare(String(rowDate(b))) || byName(a,b),
+    "amount-desc":(a,b)=>rowAmount(b)-rowAmount(a) || byName(a,b),
+    "name-asc":byName,
+    "target-name":byTarget
+  };
+  rows.sort(sorters[mode] || Object.values(sorters)[0]).forEach((row,index)=>{
+    tbody.appendChild(row);
+    const seq = row.querySelector(".oe-seq");
+    if(seq) seq.textContent = String(index + 1);
+  });
+}
+function applyOwnerExpenseTableOrder(order){
+  const box = $("#ownerExpenseTables");
+  const recurring = $("#ownerRecurringList");
+  const oneoff = $("#ownerOneoffList");
+  if(!box || !recurring || !oneoff) return;
+  if(order === "recurring-first"){ box.append(recurring, oneoff); }
+  else{ box.append(oneoff, recurring); }
+}
 async function loadOwnerExpenses(){
   const monthKey = $("#ownerExpMonth").value;
   const start = startOfMonthISO(monthKey), end = endOfMonthISO(monthKey);
@@ -1823,17 +1951,56 @@ async function loadOwnerExpenses(){
     salesRowsForMonthAll(monthKey)
   ]);
   const allRows = allSnap.docs.map(d=>({id:d.id, ...d.data()}));
-  const recurring = allRows.filter(r=>r.type==="recurring" && r.active !== false).sort((a,b)=>String(a.name).localeCompare(String(b.name),"th"));
-  const oneoffs = allRows.filter(r=>r.type==="oneoff" && r.monthKey===monthKey).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const recurringSort = ownerExpenseSortMode("recurring");
+  const oneoffSort = ownerExpenseSortMode("oneoff");
+  const tableOrder = ownerExpenseTableOrder();
+  const recurring = sortOwnerExpenseRows(allRows.filter(r=>r.type==="recurring" && r.active !== false), "recurring", recurringSort);
+  const oneoffs = sortOwnerExpenseRows(allRows.filter(r=>r.type==="oneoff" && r.monthKey===monthKey), "oneoff", oneoffSort);
   const compRows = compSnap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>String(a.userName).localeCompare(String(b.userName),"th"));
   const byBranchTable = active.map(b=>`<tr><td>${escapeHtml(b.name)}</td><td class="money">${money(alloc.byBranch[b.id])}</td></tr>`).join("");
+  const recurringPanel = `<div class="panel" id="ownerRecurringList">
+      <div class="owner-expense-table-head"><h3>รายการรายจ่ายประจำ</h3><div class="field owner-sort-field"><label>เรียงรายการ</label><select id="recurringExpenseSort">${ownerExpenseSortOptions("recurring", recurringSort)}</select></div></div>
+      ${recurring.length ? `<div class="table-wrap"><table id="recurringExpenseTable"><thead><tr><th>#</th><th>รายการประจำ</th><th class="money">จำนวน</th><th>เป็นของ</th><th>จัดการ</th></tr></thead><tbody>${recurring.map((r,index)=>`<tr class="owner-exp-edit-row" data-id="${r.id}" data-type="recurring" data-sort-name="${escapeHtml(r.name)}" data-sort-amount="${numberValue(r.amount)}" data-sort-target="${escapeHtml(ownerExpenseTargetValue(r))}"><td class="oe-seq">${index+1}</td><td><input class="oe-name" value="${escapeHtml(r.name)}"></td><td><input class="oe-amount wide-money" inputmode="decimal" value="${numberValue(r.amount)}"></td><td><select class="oe-target">${ownerExpenseTargetOptions(ownerExpenseTargetValue(r))}</select></td><td><div class="row-actions"><button type="button" class="btn small save-owner-exp write-action" data-id="${r.id}">บันทึกแก้ไข</button><button type="button" class="btn ghost small delete-owner-exp write-action" data-id="${r.id}">ลบ</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty compact">ยังไม่มีรายจ่ายประจำที่เพิ่มเอง</div>`}
+    </div>`;
+  const oneoffPanel = `<div class="panel" id="ownerOneoffList">
+      <div class="owner-expense-table-head"><h3>รายการรายจ่ายอื่น ๆ ${thaiMonth(monthKey)}</h3><div class="field owner-sort-field"><label>เรียงรายการ</label><select id="oneoffExpenseSort">${ownerExpenseSortOptions("oneoff", oneoffSort)}</select></div></div>
+      ${oneoffs.length ? `<div class="table-wrap"><table id="oneoffExpenseTable"><thead><tr><th>#</th><th>วันที่</th><th>รายการ</th><th class="money">จำนวน</th><th>เป็นของ</th><th>หมายเหตุ</th><th>จัดการ</th></tr></thead><tbody>${oneoffs.map((r,index)=>`<tr class="owner-exp-edit-row" data-id="${r.id}" data-type="oneoff" data-sort-date="${escapeHtml(r.date)}" data-sort-name="${escapeHtml(r.name)}" data-sort-amount="${numberValue(r.amount)}" data-sort-target="${escapeHtml(ownerExpenseTargetValue(r))}"><td class="oe-seq">${index+1}</td><td><input class="oe-date" type="date" value="${escapeHtml(r.date)}"></td><td><input class="oe-name" value="${escapeHtml(r.name)}"></td><td><input class="oe-amount wide-money" inputmode="decimal" value="${numberValue(r.amount)}"></td><td><select class="oe-target">${ownerExpenseTargetOptions(ownerExpenseTargetValue(r))}</select></td><td><input class="oe-note" value="${escapeHtml(r.note||"")}"></td><td><div class="row-actions"><button type="button" class="btn small save-owner-exp write-action" data-id="${r.id}">บันทึกแก้ไข</button><button type="button" class="btn ghost small delete-owner-exp write-action" data-id="${r.id}">ลบ</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty compact">ยังไม่มีรายจ่ายอื่นในเดือนนี้</div>`}
+    </div>`;
   $("#ownerExpenseResult").innerHTML = `
+    <div class="owner-expense-entry-grid">
+      <form id="oneoffExpenseForm" class="panel owner-expense-entry-card">
+        <h3>เพิ่มรายจ่ายอื่น ๆ</h3>
+        <div class="grid two compact-grid">
+          <div class="field"><label>วันที่</label><input id="oneDate" type="date" value="${todayISO().slice(0,7)===monthKey?todayISO():start}"></div>
+          <div class="field"><label>ชื่อรายจ่าย</label><input id="oneName" placeholder="เช่น ซื้อของ / ซ่อมอุปกรณ์"></div>
+          <div class="field"><label>จำนวนเงิน</label><input id="oneAmount" inputmode="decimal" placeholder="0"></div>
+          <div class="field"><label>เป็นของ</label><select id="oneTarget">${ownerExpenseTargetOptions("ALL")}</select></div>
+          <div class="field owner-expense-note-field"><label>หมายเหตุ</label><input id="oneNote"></div>
+          <div class="field"><label>&nbsp;</label><button class="btn write-action">บันทึกรายจ่ายอื่น</button></div>
+        </div>
+      </form>
+      <form id="recurringExpenseForm" class="panel owner-expense-entry-card">
+        <h3>เพิ่มรายจ่ายประจำ</h3>
+        <div class="grid two compact-grid">
+          <div class="field"><label>ชื่อรายจ่าย</label><input id="recName" placeholder="เช่น ค่าเช่า / ค่าเน็ต / ค่าบัญชี"></div>
+          <div class="field"><label>จำนวนเงิน/เดือน</label><input id="recAmount" inputmode="decimal" placeholder="0"></div>
+          <div class="field"><label>เป็นของ</label><select id="recTarget">${ownerExpenseTargetOptions("ALL")}</select></div>
+          <div class="field"><label>&nbsp;</label><button class="btn write-action">บันทึกรายจ่ายประจำ</button></div>
+        </div>
+      </form>
+    </div>
     ${kpis([
       {label:"รายจ่ายเจ้าของลงรวมเดือนนี้", value:`${money(alloc.selectedTotal)} บาท`},
       {label:"รายจ่ายประจำที่เพิ่มเอง", value:`${money(recurring.reduce((s,r)=>s+numberValue(r.amount),0))} บาท`},
       {label:"รายจ่ายอื่น ๆ เดือนนี้", value:`${money(oneoffs.reduce((s,r)=>s+numberValue(r.amount),0))} บาท`},
       {label:"ค่าตอบแทนที่บันทึกแล้ว", value:`${money(compRows.reduce((s,r)=>s+numberValue(r.totalCost),0))} บาท`, sub:"ดึงจากหน้าค่าตอบแทน ช่องต้นทุนรวม/ต้นทุนรวม+ปกส."}
     ])}
+    <div class="panel owner-expense-layout-panel">
+      <div class="grid three compact-grid">
+        <div class="field"><label>ลำดับตารางด้านล่าง</label><select id="ownerExpenseTableOrder"><option value="oneoff-first" ${tableOrder==="oneoff-first"?"selected":""}>รายจ่ายอื่น ๆ ก่อน</option><option value="recurring-first" ${tableOrder==="recurring-first"?"selected":""}>รายจ่ายประจำก่อน</option></select></div>
+        <div class="state ok owner-expense-layout-note">ระบบเรียงรายการอัตโนมัติ และเปลี่ยนลำดับตารางได้โดยไม่แก้ข้อมูลจริง</div>
+      </div>
+    </div>
     <div class="panel">
       <h3>สรุปภาระรายจ่ายตามสาขา ${thaiMonth(monthKey)}</h3>
       <div class="table-wrap"><table><thead><tr><th>สาขา</th><th class="money">รายจ่ายที่รับภาระ</th></tr></thead><tbody>${byBranchTable}</tbody></table></div>
@@ -1843,32 +2010,14 @@ async function loadOwnerExpenses(){
       <div class="state warn">ถ้ายังไม่ได้กดบันทึกในหน้าค่าตอบแทน ระบบจะยังไม่ดึงต้นทุนของคนนั้นมาเป็นรายจ่ายประจำ</div>
       ${compRows.length ? `<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th>ระดับ</th><th class="money">ต้นทุนรวม</th><th>การกระจาย</th></tr></thead><tbody>${compRows.map(r=>{ const u=appState.users.find(x=>x.id===r.userId)||{id:r.userId, branchIds:r.branchIds||[]}; return `<tr><td>${escapeHtml(r.userName||userName(r.userId))}</td><td>${roleBadge(r.role)}</td><td class="money">${money(r.totalCost)}</td><td>${compensationAllocationLabel(u, monthRows, active.map(b=>b.id))}</td></tr>`; }).join("")}</tbody></table></div>` : `<div class="empty">ยังไม่มีรายการค่าตอบแทนที่บันทึกในเดือนนี้</div>`}
     </div>
-    <form id="recurringExpenseForm" class="panel">
-      <h3>เพิ่มรายจ่ายประจำ</h3>
-      <div class="grid three compact-grid">
-        <div class="field"><label>ชื่อรายจ่าย</label><input id="recName" placeholder="เช่น ค่าเช่า / ค่าเน็ต / ค่าบัญชี"></div>
-        <div class="field"><label>จำนวนเงิน/เดือน</label><input id="recAmount" inputmode="decimal" placeholder="0"></div>
-        <div class="field"><label>เป็นของ</label><select id="recTarget">${ownerExpenseTargetOptions("ALL")}</select></div>
-        <div class="field"><label>&nbsp;</label><button class="btn write-action">บันทึกรายจ่ายประจำ</button></div>
-      </div>
-      ${recurring.length ? `<div class="table-wrap"><table><thead><tr><th>รายการประจำ</th><th class="money">จำนวน</th><th>เป็นของ</th><th>จัดการ</th></tr></thead><tbody>${recurring.map(r=>`<tr class="owner-exp-edit-row" data-id="${r.id}" data-type="recurring"><td><input class="oe-name" value="${escapeHtml(r.name)}"></td><td><input class="oe-amount wide-money" inputmode="decimal" value="${numberValue(r.amount)}"></td><td><select class="oe-target">${ownerExpenseTargetOptions(ownerExpenseTargetValue(r))}</select></td><td><div class="row-actions"><button type="button" class="btn small save-owner-exp write-action" data-id="${r.id}">บันทึกแก้ไข</button><button type="button" class="btn ghost small delete-owner-exp write-action" data-id="${r.id}">ลบ</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty compact">ยังไม่มีรายจ่ายประจำที่เพิ่มเอง</div>`}
-    </form>
-    <form id="oneoffExpenseForm" class="panel">
-      <h3>เพิ่มรายจ่ายอื่น ๆ</h3>
-      <div class="grid three compact-grid">
-        <div class="field"><label>วันที่</label><input id="oneDate" type="date" value="${todayISO().slice(0,7)===monthKey?todayISO():start}"></div>
-        <div class="field"><label>ชื่อรายจ่าย</label><input id="oneName" placeholder="เช่น ซื้อของ / ซ่อมอุปกรณ์"></div>
-        <div class="field"><label>จำนวนเงิน</label><input id="oneAmount" inputmode="decimal" placeholder="0"></div>
-        <div class="field"><label>เป็นของ</label><select id="oneTarget">${ownerExpenseTargetOptions("ALL")}</select></div>
-        <div class="field"><label>หมายเหตุ</label><input id="oneNote"></div>
-        <div class="field"><label>&nbsp;</label><button class="btn write-action">บันทึกรายจ่ายอื่น</button></div>
-      </div>
-      ${oneoffs.length ? `<div class="table-wrap"><table><thead><tr><th>วันที่</th><th>รายการ</th><th class="money">จำนวน</th><th>เป็นของ</th><th>หมายเหตุ</th><th>จัดการ</th></tr></thead><tbody>${oneoffs.map(r=>`<tr class="owner-exp-edit-row" data-id="${r.id}" data-type="oneoff"><td><input class="oe-date" type="date" value="${escapeHtml(r.date)}"></td><td><input class="oe-name" value="${escapeHtml(r.name)}"></td><td><input class="oe-amount wide-money" inputmode="decimal" value="${numberValue(r.amount)}"></td><td><select class="oe-target">${ownerExpenseTargetOptions(ownerExpenseTargetValue(r))}</select></td><td><input class="oe-note" value="${escapeHtml(r.note||"")}"></td><td><div class="row-actions"><button type="button" class="btn small save-owner-exp write-action" data-id="${r.id}">บันทึกแก้ไข</button><button type="button" class="btn ghost small delete-owner-exp write-action" data-id="${r.id}">ลบ</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty compact">ยังไม่มีรายจ่ายอื่นในเดือนนี้</div>`}
-    </form>`;
+    <div id="ownerExpenseTables">${tableOrder === "recurring-first" ? recurringPanel + oneoffPanel : oneoffPanel + recurringPanel}</div>`;
   $("#recurringExpenseForm").onsubmit = saveRecurringExpense;
   $("#oneoffExpenseForm").onsubmit = saveOneoffExpense;
   $$(".save-owner-exp").forEach(btn=>btn.onclick=()=>updateOwnerExpense(btn.closest(".owner-exp-edit-row")));
   $$(".delete-owner-exp").forEach(btn=>btn.onclick=()=>deleteOwnerExpense(btn.dataset.id));
+  $("#recurringExpenseSort")?.addEventListener("change", e=>{ safeStorageSet("loveMatcha.ownerExpenseSort.recurring", e.target.value); sortOwnerExpenseTableDom("recurring", e.target.value); });
+  $("#oneoffExpenseSort")?.addEventListener("change", e=>{ safeStorageSet("loveMatcha.ownerExpenseSort.oneoff", e.target.value); sortOwnerExpenseTableDom("oneoff", e.target.value); });
+  $("#ownerExpenseTableOrder")?.addEventListener("change", e=>{ safeStorageSet("loveMatcha.ownerExpenseTableOrder", e.target.value); applyOwnerExpenseTableOrder(e.target.value); });
   updateOnlineUi();
 }
 async function saveRecurringExpense(e){
@@ -1958,14 +2107,15 @@ async function renderCompensation(){
       </div>
     </div>
     <div class="panel compact-panel">
-      <div class="flex"><h3>ชนิดขนม / ราคา / % OT</h3><button id="addDessertSettingComp" class="btn secondary small write-action">+ เพิ่มชนิดขนม</button></div>
-      <div id="dessertSettingsRows" class="grid">${dessertSettingRows()}</div>
-      <button id="saveDessertSettingsComp" class="btn write-action" style="margin-top:10px">บันทึกชนิดขนม</button>
+      <div class="flex"><h3>ชนิดขนม / ราคา / % OT</h3><button id="sortDessertSettingComp" type="button" class="btn ghost small">เรียงชื่อ ก-ฮ</button><button id="addDessertSettingComp" type="button" class="btn secondary small write-action">+ เพิ่มชนิดขนม</button></div>
+      <div class="state ok">ใช้ปุ่ม ↑ ↓ เพื่อสลับลำดับ รายการเก่าที่บันทึกแล้วจะคงราคาและ % OT ของวันนั้น ไม่คำนวณย้อนหลังใหม่</div>
+      <div id="dessertSettingsRows" class="grid dessert-settings-list">${dessertSettingRows()}</div>
+      <button id="saveDessertSettingsComp" class="btn write-action" style="margin-top:10px">บันทึกชนิดขนมและลำดับ</button>
     </div>`;
   $("#reloadComp").onclick = loadCompensation;
   $("#saveDailyPaySettings").onclick = saveDailyPaySettings;
   $("#compMonth").onchange = loadCompensation;
-  bindDessertSettingsControls("#addDessertSettingComp", "#dessertSettingsRows");
+  bindDessertSettingsControls("#addDessertSettingComp", "#dessertSettingsRows", "#sortDessertSettingComp");
   $("#saveDessertSettingsComp").onclick = saveDessertSettings;
   await loadCompensation();
 }
@@ -1996,12 +2146,8 @@ async function loadCompensation(){
   const dessertOT = {};
   rows.filter(r=>r.otEnabled).forEach(r=>{
     const workers = r.otWorkerIds || [];
-    const recalculatedDessertTotal = (r.desserts || []).reduce((s,x)=>{
-      const current = dessertItemByName(x.name) || {};
-      const price = current.name ? numberValue(current.price) : numberValue(x.price);
-      const percent = current.name ? numberValue(current.percent) : numberValue(x.percent);
-      return s + price * numberValue(x.qty) * percent / 100;
-    },0);
+    // ใช้ราคาและ % ที่บันทึกไว้ในวันนั้น เพื่อไม่ให้การเพิ่ม/ลบ/สลับลำดับขนมแก้ยอด OT ย้อนหลัง
+    const recalculatedDessertTotal = (r.desserts || []).reduce((s,x)=>s + dessertPayForRecord(x),0);
     const per = workers.length ? recalculatedDessertTotal / workers.length : 0;
     workers.forEach(id => dessertOT[id] = (dessertOT[id] || 0) + per);
   });
@@ -2036,7 +2182,7 @@ async function loadCompensation(){
       <th>ชื่อ</th><th>ระดับ</th><th class="money">เงินเดือน</th><th class="money">OT เพิ่มอื่น ๆ</th><th>OT จากอะไร</th><th class="money">OT ทำขนม</th>
       <th class="money">เงินเพิ่มออกบูธ</th><th class="money">OT พาร์ทไทม์ Rendo</th><th class="money">โบนัสรายวัน</th><th class="money">โบนัสรายเดือน</th>
       <th class="money">หักเงิน</th><th>รายละเอียดหัก</th><th class="money">เบิกล่วงหน้า</th><th class="money">ปกส.ลูกจ้าง</th>
-      <th class="money">ยอดโอนปลายเดือน</th><th class="money">ต้นทุนรวม+ปกส.</th><th>บันทึก</th>
+      <th>ธนาคาร</th><th>เลขบัญชี</th><th class="money">ยอดโอนปลายเดือน</th><th class="money">ต้นทุนรวม+ปกส.</th><th>บันทึก</th>
     </tr></thead>
     <tbody>${regularPayUsers.map(u=>{
       const r = records[u.id] || {};
@@ -2052,6 +2198,8 @@ async function loadCompensation(){
       const dessert = numberValue(dessertOT[u.id]);
       const deduction = numberValue(r.deduction);
       const advance = numberValue(advances[u.id]);
+      const bankName = r.bankName ?? u.bankName ?? prevRecords[u.id]?.bankName ?? "";
+      const bankAccountNumber = r.bankAccountNumber ?? u.bankAccountNumber ?? prevRecords[u.id]?.bankAccountNumber ?? "";
       const transfer = salary + otOther + dessert + boothBonus + rendo + daily + monthly - deduction - advance - employeeSS;
       const totalCost = salary + otOther + dessert + boothBonus + rendo + daily + monthly - deduction + employerSS;
       return `<tr class="comp-row" data-user="${u.id}" data-daily-role="0" data-daily-wage="0" data-daily-full-wage="0" data-daily-hourly-wage="0">
@@ -2068,6 +2216,8 @@ async function loadCompensation(){
         <td><input class="comp-deduction-note" value="${escapeHtml(r.deductionNote || "")}"></td>
         <td class="money comp-advance" data-value="${advance}">${money(advance)}</td>
         <td class="money comp-employee-ss">${money(employeeSS)}</td>
+        <td><input class="comp-bank-name" value="${escapeHtml(bankName)}" placeholder="ชื่อธนาคาร"></td>
+        <td><input class="comp-bank-account" inputmode="numeric" value="${escapeHtml(bankAccountNumber)}" placeholder="เลขบัญชี"></td>
         <td class="money comp-transfer"><b>${money(transfer)}</b></td>
         <td class="money comp-cost"><b>${money(totalCost)}</b></td>
         <td><div class="row-actions"><button class="btn small write-action save-comp">บันทึก</button><button type="button" class="btn secondary small share-comp">รายละเอียด/PDF</button></div></td>
@@ -2080,7 +2230,7 @@ async function loadCompensation(){
       <th class="money">ค่าจ้างวันที่ทำงานทั้งวัน</th><th>ไม่นำทั้งวันมาคำนวณ</th>
       <th class="money">ค่าจ้างวันที่ทำงานรายชั่วโมง</th><th>ไม่นำรายชั่วโมงมาคำนวณ</th>
       <th class="money">ค่าจ้างที่นำมาคิด</th><th class="money">OT เพิ่มอื่น ๆ</th><th>OT จากอะไร</th><th class="money">OT ทำขนม</th><th class="money">เงินเพิ่มออกบูธ</th><th class="money">OT พาร์ทไทม์ Rendo</th>
-      <th class="money">หักเงิน</th><th>รายละเอียดหัก</th><th class="money">เบิกล่วงหน้า</th><th class="money">ยอดโอนปลายเดือน</th><th class="money">ต้นทุนรวม</th><th>บันทึก</th>
+      <th class="money">หักเงิน</th><th>รายละเอียดหัก</th><th class="money">เบิกล่วงหน้า</th><th>ธนาคาร</th><th>เลขบัญชี</th><th class="money">ยอดโอนปลายเดือน</th><th class="money">ต้นทุนรวม</th><th>บันทึก</th>
     </tr></thead>
     <tbody>${dailyPayUsers.map(u=>{
       const r = records[u.id] || {};
@@ -2094,6 +2244,8 @@ async function loadCompensation(){
       const dessert = numberValue(dessertOT[u.id]);
       const deduction = numberValue(r.deduction);
       const advance = numberValue(advances[u.id]);
+      const bankName = r.bankName ?? u.bankName ?? prevRecords[u.id]?.bankName ?? "";
+      const bankAccountNumber = r.bankAccountNumber ?? u.bankAccountNumber ?? prevRecords[u.id]?.bankAccountNumber ?? "";
       const transfer = salary + otOther + dessert + boothBonus + rendo - deduction - advance;
       const totalCost = salary + otOther + dessert + boothBonus + rendo - deduction;
       return `<tr class="comp-row" data-user="${u.id}" data-daily-role="1" data-daily-wage="${numberValue(wage.total)}" data-daily-full-wage="${numberValue(wage.full)}" data-daily-hourly-wage="${numberValue(wage.hourly)}">
@@ -2111,6 +2263,8 @@ async function loadCompensation(){
         <td><input class="comp-deduction wide-money" inputmode="decimal" value="${deduction || ""}"></td>
         <td><input class="comp-deduction-note" value="${escapeHtml(r.deductionNote || "")}"></td>
         <td class="money comp-advance" data-value="${advance}">${money(advance)}</td>
+        <td><input class="comp-bank-name" value="${escapeHtml(bankName)}" placeholder="ชื่อธนาคาร"></td>
+        <td><input class="comp-bank-account" inputmode="numeric" value="${escapeHtml(bankAccountNumber)}" placeholder="เลขบัญชี"></td>
         <td class="money comp-transfer"><b>${money(transfer)}</b></td>
         <td class="money comp-cost"><b>${money(totalCost)}</b></td>
         <td><div class="row-actions"><button class="btn small write-action save-comp">บันทึก</button><button type="button" class="btn secondary small share-comp">รายละเอียด/PDF</button></div></td>
@@ -2193,6 +2347,7 @@ function getCompRowData(row, monthKey){
     dailyPaidAlready:isDaily && dailyFullPaidAlready && dailyHourlyPaidAlready,
     otOther, otOtherNote:$(".comp-ot-note", row)?.value.trim() || "", dessertOT,
     boothBonus, rendoOT, dailyBonus, monthlyBonus, deduction, deductionNote:$(".comp-deduction-note", row)?.value.trim() || "",
+    bankName:$(".comp-bank-name", row)?.value.trim() || "", bankAccountNumber:$(".comp-bank-account", row)?.value.trim() || "",
     advances, employeeSS, employerSS, totalIncome, netTransfer, totalCost:salary + otOther + dessertOT + boothBonus + rendoOT + dailyBonus + monthlyBonus - deduction + employerSS,
     createdBy:appState.currentUser?.name || "-", createdAt:new Date()
   };
@@ -2208,6 +2363,8 @@ function buildCompSummaryFromData(d){
     `สรุปค่าตอบแทน Love Matcha`,
     `เดือน: ${thaiMonth(d.monthKey)}`,
     `ชื่อ: ${d.userName}`,
+    `ธนาคาร: ${d.bankName || "-"}`,
+    `เลขบัญชี: ${d.bankAccountNumber || "-"}`,
     ...wageLines,
     `OT เพิ่มอื่น ๆ: ${money(d.otOther)} บาท${d.otOtherNote ? ` (${d.otOtherNote})` : ""}`,
     `OT ทำขนม: ${money(d.dessertOT)} บาท`,
@@ -2232,10 +2389,9 @@ function buildCompPdfHtml(d){
       ${item("ค่าจ้างรายชั่วโมง", d.dailyHourlyPaidAlready ? 0 : d.dailyHourlyWageBeforeExclude, d.dailyHourlyPaidAlready ? `ได้รับแล้ว ไม่นำยอดเดิม ${money(d.dailyHourlyWageBeforeExclude)} บาทมาคำนวณซ้ำ` : "")}
       ${item("ค่าจ้างที่นำมาคำนวณ", d.salary)}` : item("เงินเดือน", d.salary);
   const employeeSSRow = !d.isDaily ? item("ประกันสังคมฝ่ายลูกจ้าง", -Math.abs(d.employeeSS)) : "";
-  const ownerCostRows = !d.isDaily ? `${item("ประกันสังคมนายจ้าง", d.employerSS)}${item("ต้นทุนรวม+ปกส.", d.totalCost)}` : item("ต้นทุนรวม", d.totalCost);
   return `<div class="pdf-document pdf-one-page">
     <div class="pdf-header"><img src="${escapeHtml(appState.settings.logoUrl || "./icons/logo.png")}" alt="logo"><div><h1>สรุปค่าตอบแทน</h1><p>${escapeHtml(appState.settings.storeName || "Love Matcha")} · ${thaiMonth(d.monthKey)}</p></div></div>
-    <div class="pdf-info-grid"><div><small>ชื่อพนักงาน</small><b>${escapeHtml(d.userName)}</b></div><div><small>ตำแหน่ง</small><b>${escapeHtml(role)}</b></div><div><small>จัดทำโดย</small><b>${escapeHtml(d.createdBy)}</b></div><div><small>วันที่จัดทำ</small><b>${madeAt}</b></div></div>
+    <div class="pdf-info-grid"><div><small>ชื่อพนักงาน</small><b>${escapeHtml(d.userName)}</b></div><div><small>ตำแหน่ง</small><b>${escapeHtml(role)}</b></div><div><small>ธนาคาร</small><b>${escapeHtml(d.bankName || "-")}</b></div><div><small>เลขบัญชี</small><b>${escapeHtml(d.bankAccountNumber || "-")}</b></div><div><small>จัดทำโดย</small><b>${escapeHtml(d.createdBy)}</b></div><div><small>วันที่จัดทำ</small><b>${madeAt}</b></div></div>
     <div class="pdf-summary-grid"><div><small>รวมรายรับก่อนหัก</small><b>${money(d.totalIncome)} บาท</b></div><div><small>ยอดหักรวม</small><b>${money(d.deduction + d.advances + d.employeeSS)} บาท</b></div><div class="pdf-summary-total"><small>ยอดโอนปลายเดือน</small><b>${money(d.netTransfer)} บาท</b></div></div>
     <table class="pdf-table"><thead><tr><th>รายการ</th><th>จำนวนเงิน (บาท)</th></tr></thead><tbody>
       ${dailyWageRows}
@@ -2244,7 +2400,6 @@ function buildCompPdfHtml(d){
       <tr class="pdf-subtotal"><td>รวมรายรับก่อนหัก</td><td class="pdf-money">${money(d.totalIncome)}</td></tr>
       ${item("หักเงิน", -Math.abs(d.deduction), d.deductionNote)}${item("เบิกล่วงหน้า", -Math.abs(d.advances))}${employeeSSRow}
       <tr class="pdf-total"><td>ยอดที่ต้องโอนปลายเดือน</td><td class="pdf-money">${money(d.netTransfer)}</td></tr>
-      ${ownerCostRows}
     </tbody></table>
     <div class="pdf-note-box"><b>หมายเหตุ</b> ${d.isDaily ? "รายวันแยกค่าจ้างทั้งวันและรายชั่วโมง หากติ๊กว่าได้รับแล้ว ระบบจะไม่นำยอดส่วนนั้นมาคำนวณซ้ำ" : "ยอดโอนปลายเดือนเป็นยอดหลังหักเงิน/เบิกล่วงหน้า/ประกันสังคมฝ่ายลูกจ้าง"}</div>
   </div>`;
@@ -2303,13 +2458,22 @@ async function saveCompRow(row, monthKey){
     otOther:d.otOther, otOtherNote:d.otOtherNote, dessertOT:d.dessertOT, boothBonus:d.boothBonus, rendoOT:d.rendoOT,
     dailyBonus:d.dailyBonus, monthlyBonus:d.monthlyBonus, dailyBonusOverride:null, monthlyBonusOverride:null,
     deduction:d.deduction, deductionNote:d.deductionNote, advances:d.advances,
+    bankName:d.bankName, bankAccountNumber:d.bankAccountNumber,
     employeeSocialSecurity:d.employeeSS, employerSocialSecurity:d.employerSS, netTransfer:d.netTransfer, totalCost:d.totalCost,
     updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id, updatedByName:appState.currentUser.name
   };
   const id = `${monthKey}_${d.userId}`;
   const ref = doc(appState.db, "compensationRecords", id);
   const before = await getDoc(ref);
-  await setDoc(ref, data, {merge:true});
+  const batch = writeBatch(appState.db);
+  batch.set(ref, data, {merge:true});
+  batch.set(doc(appState.db, "users", d.userId), {
+    bankName:d.bankName, bankAccountNumber:d.bankAccountNumber,
+    updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id, updatedByName:appState.currentUser.name
+  }, {merge:true});
+  await batch.commit();
+  const user = appState.users.find(u=>u.id===d.userId);
+  if(user){ user.bankName = d.bankName; user.bankAccountNumber = d.bankAccountNumber; }
   await audit("แก้ค่าตอบแทน", {monthKey, user:d.userName}, before.exists()?before.data():null, data);
   await afterWrite("compensation");
   showToast(`บันทึกค่าตอบแทนของ ${d.userName} แล้ว`);
@@ -2507,7 +2671,7 @@ async function testBackupUrl(){
   if(!url) return showToast("กรุณากรอก URL ก่อน");
   const testUrl = `${url}${url.includes("?") ? "&" : "?"}action=test&source=love_matcha_sales_app&ts=${Date.now()}`;
   window.open(testUrl, "_blank", "noopener,noreferrer");
-  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.4.1 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
+  $("#backupState").innerHTML = `<div class="state warn">เปิดหน้าทดสอบ Apps Script แล้ว หน้าใหม่ต้องขึ้น Love Matcha Sales Backup v1.4.2 และมี jsonFileName / folderUrl ถ้ายังขึ้น v1.2 หรือยังมี sheetName แปลว่ายัง Deploy โค้ด Apps Script ใหม่ไม่สำเร็จ</div>`;
 }
 async function exportAllSalesCsv(){
   const snap = await getDocs(collection(appState.db, "dailySales"));
@@ -2520,7 +2684,7 @@ async function handleRestoreFile(){
   const lower = file.name.toLowerCase();
   if(!lower.endsWith(".json")){
     appState.restorePreview = null;
-    $("#restorePreview").innerHTML = `<div class="state error">v1.4.1 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
+    $("#restorePreview").innerHTML = `<div class="state error">v1.4.2 รองรับ Restore เฉพาะไฟล์ .json เท่านั้น</div>`;
     $("#restoreBtn").disabled = true;
     return;
   }
@@ -2629,6 +2793,8 @@ async function renderUsers(){
         <div class="field"><label>ชื่อ</label><input id="newUserName" placeholder="ชื่อพนักงาน"></div>
         <div class="field"><label>ระดับ</label><select id="newUserRole">${canCreateRoles.map(r=>`<option value="${r}">${ROLE_LABELS[r]}</option>`).join("")}</select></div>
         <div class="field"><label>PIN 4 ตัว</label><input id="newUserPin" type="password" inputmode="numeric" maxlength="4"></div>
+        <div class="field"><label>ธนาคาร</label><input id="newUserBankName" placeholder="เช่น กสิกรไทย"></div>
+        <div class="field"><label>เลขบัญชี</label><input id="newUserBankAccount" inputmode="numeric" placeholder="กรอกเฉพาะตัวเลขหรือขีด"></div>
       </div>
       <div class="field" style="margin-top:10px"><label>สาขาที่ประจำ</label><div id="newUserBranches" class="check-list">${activeBranches().map(b=>`<label class="check-item"><input type="checkbox" value="${b.id}"> ${escapeHtml(b.name)}</label>`).join("")}</div><small>เจ้าของ/ผู้จัดการจะเห็นทุกสาขาอัตโนมัติ</small></div>
       <div class="sticky-save"><button class="btn full write-action">สร้างผู้ใช้</button></div>
@@ -2645,7 +2811,7 @@ async function renderUsers(){
 }
 function usersTable(){
   const rolesAllowedForManager = ["manager","supervisor","staff","daily"];
-  return `<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th>ระดับ</th><th>สาขา</th><th>PIN</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>
+  return `<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th>ระดับ</th><th>สาขา</th><th>ธนาคาร</th><th>เลขบัญชี</th><th>PIN</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>
     ${appState.users.map(u=>{
       const canEdit = canEditUser(u);
       const roleOptions = Object.keys(ROLE_LABELS).filter(r => isOwner() || rolesAllowedForManager.includes(r)).map(r=>`<option value="${r}" ${u.role===r?"selected":""}>${ROLE_LABELS[r]}</option>`).join("");
@@ -2653,6 +2819,8 @@ function usersTable(){
         <td><input class="u-name" value="${escapeHtml(u.name)}" ${canEdit?"":"disabled"}></td>
         <td><select class="u-role" ${canEdit && u.id!==appState.currentUser.id && (isOwner() || isManager())?"":"disabled"}>${roleOptions}</select></td>
         <td>${branchChecksHtml(u, canEdit)}</td>
+        <td><input class="u-bank-name" value="${escapeHtml(u.bankName || "")}" ${canEdit?"":"disabled"}></td>
+        <td><input class="u-bank-account" inputmode="numeric" value="${escapeHtml(u.bankAccountNumber || "")}" ${canEdit?"":"disabled"}></td>
         <td>${isOwner()?`<input class="u-pin" value="${escapeHtml(u.pin || "")}" inputmode="numeric" maxlength="4" ${canEdit?"":"disabled"}>`:"••••"}</td>
         <td><select class="u-active" ${canEdit?"":"disabled"}><option value="true" ${u.active!==false?"selected":""}>ใช้งาน</option><option value="false" ${u.active===false?"selected":""}>ปิดใช้</option></select></td>
         <td class="row-actions">${canEdit?`<button class="btn small write-action save-user">บันทึก</button>`:""}${canDeleteUser(u)?`<button class="btn danger small write-action delete-user">ลบ</button>`:""}</td>
@@ -2695,7 +2863,7 @@ async function createUser(e){
   if(appState.currentUser.role==="supervisor" && !["staff","daily"].includes(role)) return showToast("หัวหน้างานสร้างได้เฉพาะพนักงานหรือรายวัน");
   const branchIds = ["owner","manager"].includes(role) ? ["ALL"] : $$("#newUserBranches input:checked").map(x=>x.value);
   if(!["owner","manager"].includes(role) && branchIds.length < 1) return showToast("กรุณาเลือกสาขาอย่างน้อย 1 สาขา");
-  const data = {name, role, pin, branchIds, active:true, createdAt:serverTimestamp(), createdBy:appState.currentUser.id, createdByName:appState.currentUser.name, updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id};
+  const data = {name, role, pin, branchIds, bankName:$("#newUserBankName")?.value.trim() || "", bankAccountNumber:$("#newUserBankAccount")?.value.trim() || "", active:true, createdAt:serverTimestamp(), createdBy:appState.currentUser.id, createdByName:appState.currentUser.name, updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id};
   const ref = doc(appState.db, "users", uid("user"));
   await setDoc(ref, data);
   await audit("เพิ่ม user", {name, role:ROLE_LABELS[role]}, null, {...data, pin:isOwner()?pin:"****"});
@@ -2713,7 +2881,8 @@ async function saveUser(row){
   const branchIds = ["owner","manager"].includes(role) ? ["ALL"] : $$(".u-branch:checked", row).map(x=>x.value);
   const data = {
     name:$(".u-name", row).value.trim(), role, active:$(".u-active", row).value === "true",
-    branchIds, updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id, updatedByName:appState.currentUser.name
+    branchIds, bankName:$(".u-bank-name", row)?.value.trim() || "", bankAccountNumber:$(".u-bank-account", row)?.value.trim() || "",
+    updatedAt:serverTimestamp(), updatedBy:appState.currentUser.id, updatedByName:appState.currentUser.name
   };
   const pinInput = $(".u-pin", row);
   if(isOwner() && pinInput){
@@ -2857,27 +3026,64 @@ async function deleteBranchFromSettings(branchId){
   renderSettings();
 }
 function dessertSettingRows(){
-  return (appState.settings.dessertItems || []).map(x=>`<div class="grid three dessert-setting">
+  return dessertItemsSorted().map((x,index)=>`<div class="dessert-setting" data-id="${escapeHtml(x.id || stableDessertId(x.name,index))}">
+    <div class="dessert-order-badge" title="ลำดับ"><span class="dessert-order-number">${index+1}</span></div>
     <div class="field"><label>ชื่อขนม</label><input class="ds-name" value="${escapeHtml(x.name)}"></div>
     <div class="field"><label>ราคาขาย/ชิ้น</label><input class="ds-price" inputmode="decimal" value="${numberValue(x.price)}"></div>
     <div class="field"><label>เปอร์เซ็นต์ OT</label><input class="ds-percent" inputmode="decimal" value="${numberValue(x.percent)}"></div>
-    <div class="field"><label>&nbsp;</label><button class="btn ghost small remove-dessert-setting">ลบ</button></div>
+    <div class="dessert-setting-actions"><button type="button" class="btn ghost small dessert-move-up" aria-label="เลื่อนขึ้น">↑</button><button type="button" class="btn ghost small dessert-move-down" aria-label="เลื่อนลง">↓</button><button type="button" class="btn ghost small remove-dessert-setting">ลบ</button></div>
   </div>`).join("");
 }
-function bindDessertSettingsControls(addBtnSelector="#addDessertSetting", rowsSelector="#dessertSettingsRows"){
+function refreshDessertSettingOrderUi(rowsBox){
+  if(!rowsBox) return;
+  const rows = $$(".dessert-setting", rowsBox);
+  rows.forEach((row,index)=>{
+    const number = $(".dessert-order-number", row);
+    if(number) number.textContent = String(index + 1);
+    const up = $(".dessert-move-up", row), down = $(".dessert-move-down", row);
+    if(up) up.disabled = index === 0;
+    if(down) down.disabled = index === rows.length - 1;
+  });
+}
+function bindDessertSettingRow(row, rowsBox){
+  $(".remove-dessert-setting", row).onclick = ()=>{ row.remove(); refreshDessertSettingOrderUi(rowsBox); };
+  $(".dessert-move-up", row).onclick = ()=>{
+    const prev = row.previousElementSibling;
+    if(prev) rowsBox.insertBefore(row, prev);
+    refreshDessertSettingOrderUi(rowsBox);
+  };
+  $(".dessert-move-down", row).onclick = ()=>{
+    const next = row.nextElementSibling;
+    if(next) rowsBox.insertBefore(next, row);
+    refreshDessertSettingOrderUi(rowsBox);
+  };
+}
+function bindDessertSettingsControls(addBtnSelector="#addDessertSetting", rowsSelector="#dessertSettingsRows", sortBtnSelector=""){
   const addBtn = $(addBtnSelector);
   const rowsBox = $(rowsSelector);
-  if(addBtn && rowsBox){
+  if(!rowsBox) return;
+  $$(".dessert-setting", rowsBox).forEach(row=>bindDessertSettingRow(row, rowsBox));
+  if(addBtn){
     addBtn.onclick = ()=>{
       const div=document.createElement("div");
-      div.className="grid three dessert-setting";
-      div.innerHTML=`<div class="field"><label>ชื่อขนม</label><input class="ds-name"></div><div class="field"><label>ราคาขาย/ชิ้น</label><input class="ds-price" inputmode="decimal" value="0"></div><div class="field"><label>เปอร์เซ็นต์ OT</label><input class="ds-percent" inputmode="decimal" value="10"></div><div class="field"><label>&nbsp;</label><button class="btn ghost small remove-dessert-setting">ลบ</button></div>`;
+      div.className="dessert-setting";
+      div.dataset.id = uid("dessert_item");
+      div.innerHTML=`<div class="dessert-order-badge" title="ลำดับ"><span class="dessert-order-number"></span></div><div class="field"><label>ชื่อขนม</label><input class="ds-name"></div><div class="field"><label>ราคาขาย/ชิ้น</label><input class="ds-price" inputmode="decimal" value="0"></div><div class="field"><label>เปอร์เซ็นต์ OT</label><input class="ds-percent" inputmode="decimal" value="10"></div><div class="dessert-setting-actions"><button type="button" class="btn ghost small dessert-move-up" aria-label="เลื่อนขึ้น">↑</button><button type="button" class="btn ghost small dessert-move-down" aria-label="เลื่อนลง">↓</button><button type="button" class="btn ghost small remove-dessert-setting">ลบ</button></div>`;
       rowsBox.appendChild(div);
-      $(".remove-dessert-setting",div).onclick=()=>div.remove();
+      bindDessertSettingRow(div, rowsBox);
+      refreshDessertSettingOrderUi(rowsBox);
+      $(".ds-name", div)?.focus();
       updateOnlineUi();
     };
   }
-  $$(".remove-dessert-setting").forEach(btn=>btn.onclick=()=>btn.closest(".dessert-setting").remove());
+  const sortBtn = sortBtnSelector ? $(sortBtnSelector) : null;
+  if(sortBtn){
+    sortBtn.onclick = ()=>{
+      $$(".dessert-setting", rowsBox).sort((a,b)=>String($(".ds-name",a)?.value || "").localeCompare(String($(".ds-name",b)?.value || ""),"th")).forEach(row=>rowsBox.appendChild(row));
+      refreshDessertSettingOrderUi(rowsBox);
+    };
+  }
+  refreshDessertSettingOrderUi(rowsBox);
 }
 async function readLogoFile(e){
   const file = e.target.files[0];
@@ -2954,8 +3160,14 @@ async function saveMonthlyBonusSettings(){
 }
 async function saveDessertSettings(){
   if(!requireOnline()) return;
-  const dessertItems = $$(".dessert-setting").map(row=>({name:$(".ds-name",row).value.trim(), price:numberValue($(".ds-price",row).value), percent:numberValue($(".ds-percent",row).value)})).filter(x=>x.name);
-  await updateSettings({...appState.settings, dessertItems}, "ตั้งค่า OT ทำขนม");
+  const dessertItems = $$(".dessert-setting").map((row,index)=>({
+    id:String(row.dataset.id || "").trim() || uid("dessert_item"),
+    name:$(".ds-name",row).value.trim(), price:numberValue($(".ds-price",row).value),
+    percent:numberValue($(".ds-percent",row).value), order:index + 1
+  })).filter(x=>x.name);
+  const duplicateNames = dessertItems.filter((x,index,all)=>all.findIndex(y=>y.name.trim().toLowerCase()===x.name.trim().toLowerCase()) !== index);
+  if(duplicateNames.length) return showToast("ชื่อขนมซ้ำกัน กรุณาเปลี่ยนชื่อให้ไม่ซ้ำก่อนบันทึก");
+  await updateSettings({...appState.settings, dessertItems}, "ตั้งค่า OT ทำขนมและลำดับ");
   normalizeSettings();
   showToast("บันทึก OT ทำขนมแล้ว");
   if(appState.currentPage === "compensation") await loadCompensation();

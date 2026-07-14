@@ -466,3 +466,37 @@ body.is-offline #pageContent textarea{
 .pdf-export-root{position:fixed;left:-10000px;top:0;width:794px;background:#fff;z-index:-1;overflow:visible}
 .pdf-export-root .pdf-one-page{width:794px;max-width:794px;padding:18px;box-shadow:none;border:0;overflow:visible}
 @media(max-width:640px){.pdf-summary-grid{grid-template-columns:1fr}.pdf-sheet .pdf-one-page{width:100%;max-width:760px}.pdf-one-page .pdf-table{font-size:12px}.pdf-one-page .pdf-table th,.pdf-one-page .pdf-table td{padding:6px}}
+
+/* v1.4.2: รายจ่ายด้านบน / เรียงตาราง / ลำดับขนม / บัญชีธนาคาร */
+.owner-expense-entry-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+.owner-expense-entry-card{margin-top:0;height:100%}
+.owner-expense-entry-card .btn{width:100%}
+.owner-expense-table-head{display:flex;justify-content:space-between;align-items:end;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.owner-expense-table-head h3{margin:0}
+.owner-sort-field{min-width:210px;margin-left:auto}
+.owner-sort-field label{font-size:.82rem;color:var(--muted)}
+.owner-sort-field select{padding:9px 11px}
+.owner-expense-layout-panel{padding-top:10px;padding-bottom:10px}
+.owner-expense-layout-note{margin:0;align-self:end}
+.oe-seq{width:44px;text-align:center;font-weight:900;color:var(--muted)}
+.dessert-settings-list{gap:8px}
+.dessert-setting{display:grid;grid-template-columns:42px minmax(180px,2fr) minmax(120px,1fr) minmax(120px,1fr) auto;gap:8px;align-items:end;border:1px solid var(--line);border-radius:16px;padding:10px;background:#fbfcfa}
+.dessert-order-badge{align-self:center;justify-self:center;width:34px;height:34px;border-radius:999px;display:grid;place-items:center;background:var(--secondary);color:var(--primary-dark);font-weight:900}
+.dessert-setting-actions{display:flex;gap:6px;align-items:center;padding-bottom:1px}
+.comp-row .comp-bank-name{min-width:140px}
+.comp-row .comp-bank-account{min-width:165px;font-variant-numeric:tabular-nums}
+.pdf-one-page .pdf-info-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:820px){
+  .owner-expense-entry-grid{grid-template-columns:1fr}
+  .dessert-setting{grid-template-columns:38px repeat(2,minmax(0,1fr))}
+  .dessert-setting .field:nth-of-type(1){grid-column:2 / -1}
+  .dessert-setting-actions{grid-column:1 / -1;justify-content:flex-end}
+}
+@media(max-width:560px){
+  .owner-expense-table-head{align-items:stretch}
+  .owner-sort-field{width:100%;min-width:0;margin-left:0}
+  .dessert-setting{grid-template-columns:38px 1fr}
+  .dessert-setting .field{grid-column:2}
+  .dessert-setting-actions{grid-column:1 / -1}
+  .pdf-one-page .pdf-info-grid{grid-template-columns:1fr}
+}
