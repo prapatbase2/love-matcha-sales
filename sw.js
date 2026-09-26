@@ -1,4 +1,4 @@
-const BUILD_VERSION = "1.4.2";
+const BUILD_VERSION = "1.4.3";
 const CACHE_NAME = `love-matcha-sales-v${BUILD_VERSION}`;
 const APP_SHELL = [
   "./",

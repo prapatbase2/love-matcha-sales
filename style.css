@@ -500,3 +500,34 @@ body.is-offline #pageContent textarea{
   .dessert-setting-actions{grid-column:1 / -1}
   .pdf-one-page .pdf-info-grid{grid-template-columns:1fr}
 }
+
+/* v1.4.3: Voucher / หมายเหตุ / แจ้งเตือนเงินสดรายเดือน */
+.daily-sales-note-field{grid-column:1 / -1}
+.daily-sales-note-field textarea{width:100%;min-height:72px;resize:vertical}
+.monthly-branch-badges{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}
+.monthly-branch-block.has-cash-issues{border-color:#e0ad49;box-shadow:0 0 0 2px rgba(224,173,73,.10)}
+.cash-issue-summary{font-weight:900}
+.monthly-simple-table{min-width:1000px!important}
+.monthly-simple-table .monthly-col-date{width:135px}
+.monthly-simple-table .monthly-col-staff{width:150px}
+.monthly-simple-table .monthly-col-voucher{width:90px}
+.monthly-simple-table .monthly-col-money{width:115px}
+.monthly-simple-table .monthly-col-owner{width:120px}
+.monthly-simple-table .monthly-col-note{width:170px}
+.monthly-simple-table .monthly-col-detail{width:110px}
+.monthly-note-cell{white-space:normal!important;word-break:break-word;overflow-wrap:anywhere}
+.monthly-date-cell{display:grid;gap:5px;align-items:start}
+.cash-alert-badge{display:inline-flex;width:max-content;max-width:100%;align-items:center;border-radius:999px;padding:4px 7px;background:#fff1c9;color:#8a5200;border:1px solid #e6bd62;font-size:.75rem;font-weight:900;line-height:1.15;white-space:normal}
+.cash-diff-alert-row td{background:#fff9e8!important}
+.cash-diff-alert-row td:first-child{box-shadow:inset 4px 0 0 #d89a24}
+.cash-check-btn{border-color:#d89a24!important;background:#fff4d6!important;color:#744500!important}
+
+@media(max-width:720px){
+  .monthly-simple-table{width:1000px!important;min-width:1000px!important;max-width:1000px!important}
+  .monthly-branch-head{align-items:flex-start}
+  .monthly-branch-badges{justify-content:flex-start}
+  .daily-sales-note-field{grid-column:1 / -1}
+}
+@media(max-width:380px){
+  .monthly-simple-table{width:960px!important;min-width:960px!important;max-width:960px!important}
+}
